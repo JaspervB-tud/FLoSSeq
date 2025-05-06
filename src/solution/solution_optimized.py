@@ -248,7 +248,7 @@ class Solution:
                                 else:
                                     cur_closest_pair = (other_idx, idx)
                     candidate_objective += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster]
-                    add_for_other_clusters.append((cluster, other_cluster, cur_closest_pair, cur_closest_similarity))
+                    add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
                 else: #point to be removed is not closest, check if newly added points are closer
                     for idx in self.selection_per_cluster[other_cluster]:
                         cur_similarity1 = 1 - self.distances[idx, idx_to_add1]
@@ -262,7 +262,7 @@ class Solution:
                                 cur_closest_pair = (idx_to_add, idx)
                     if cur_closest_pair[0] > -1:
                         candidate_objective += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster]
-                        add_for_other_clusters.append((cluster, other_cluster, cur_closest_pair, cur_closest_similarity))
+                        add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
 
         return candidate_objective, add_within_cluster, add_for_other_clusters
 
