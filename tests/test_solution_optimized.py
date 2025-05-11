@@ -1813,12 +1813,12 @@ def test_accept_remove_5():
     assert solution_object == solution.Solution(distances, clusters, selection=expected_selection, selection_cost=selection_cost)
 
 # Functions for calculating the groundtruth
-def groundtruth_objective_value(selection, clusters, distances, selection_cost):
+def groundtruth_objective_value(selection, clusters, distances, selection_cost, intra_factor=1.0, inter_factor=2.0):
     # Cost for selecting items
     objective_value = np.sum(selection) * selection_cost
 
-    inter_normalization = len(np.unique(clusters)) * (len(np.unique(clusters)) - 1) / 2 # normalization factor for inter cluster distances
-    intra_normalization = len(np.unique(clusters)) # normalization factor for intra cluster distances
+    inter_normalization = (len(np.unique(clusters)) * (len(np.unique(clusters)) - 1) / 2) / inter_factor # normalization factor for inter cluster distances
+    intra_normalization = len(np.unique(clusters)) / intra_factor # normalization factor for intra cluster distances
     # Intra cluster costs
     for idx in np.where(~selection)[0]:
         cur_min = np.inf

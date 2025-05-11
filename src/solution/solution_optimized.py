@@ -4,7 +4,7 @@ import math
 from decimal import Decimal, getcontext
 
 class Solution:
-    def __init__(self, distances, clusters, selection=None, selection_cost=0.1):
+    def __init__(self, distances, clusters, selection=None, selection_cost=0.1, intra_factor=1.0, inter_factor=2.0):
         # Assert that distances and clusters have the same number of rows
         if distances.shape[0] != clusters.shape[0]:
             raise ValueError("Number of points is different between distances and clusters.")
@@ -29,8 +29,8 @@ class Solution:
         self.unique_clusters = np.unique(self.clusters)
         self.selection_cost = selection_cost
 
-        self.inter_normalization = len(self.unique_clusters) * (len(self.unique_clusters) - 1) / 2 # normalization factor for inter cluster distances
-        self.intra_normalization = len(self.unique_clusters) # normalization factor for intra cluster distances
+        self.inter_normalization = (len(self.unique_clusters) * (len(self.unique_clusters) - 1) / 2) / inter_factor # normalization factor for inter cluster distances
+        self.intra_normalization = len(self.unique_clusters) / intra_factor # normalization factor for intra cluster distances
 
         # Process initial representation to optimize for comparisons speed
         self.points_per_cluster = {cluster: set(np.where(self.clusters == cluster)[0]) for cluster in self.unique_clusters} #points in every cluster
