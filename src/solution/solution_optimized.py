@@ -1,6 +1,7 @@
 import numpy as np
 import itertools
 import math
+from decimal import Decimal, getcontext
 
 class Solution:
     def __init__(self, distances, clusters, selection=None, selection_cost=0.1):
@@ -74,7 +75,7 @@ class Solution:
 
         else:
             # If selection provided is not feasible, don't do anything (YET)
-            self.objective = np.inf
+            self.objective = 0.0
             print("The solution is infeasible, objective value is set to INF and closest distances & points are not set.")
 
     def __eq__(self, other):
@@ -121,7 +122,6 @@ class Solution:
                     return False
         return True
 
-
     @staticmethod
     def generate_centroid_solution(distances, clusters, selection_cost=0.1):
         """
@@ -158,7 +158,7 @@ class Solution:
         return Solution(distances, clusters, selection, selection_cost)
     
     @staticmethod
-    def generate_random_solution(distances, clusters, selection_cost=0.1, max_fraction=0.1):
+    def generate_random_solution(distances, clusters, selection_cost=0.1, max_fraction=0.1, seed=None):
         """
         Generates a random initial solution with up to X% of the points selected,
         ensuring at least one point per cluster is selected.
@@ -173,6 +173,8 @@ class Solution:
             The cost associated with selecting a point.
         max_fraction: float
             The maximum fraction of points to select (0-1].
+        seed: int, optional
+            Random seed for reproducibility. Default is None (no seed).
 
         Returns:
         --------
@@ -188,6 +190,9 @@ class Solution:
 
         unique_clusters = np.unique(clusters)
         selection = np.zeros(clusters.shape[0], dtype=bool)
+
+        if type(seed) == int:
+            np.random.seed(seed)
 
         # Ensure at least one point per cluster is selected
         for cluster in unique_clusters:
@@ -645,3 +650,100 @@ class Solution:
         max_iterations: int
             The maximum number of iterations to perform.
         """
+        if not self.feasible:
+            raise ValueError("The solution is infeasible, cannot perform local search.")
+        
+        iteration = 0
+        objectives = [(self.objective, "start")]
+        selections = [self.selection.copy()]
+
+        solution_changed = False
+        while iteration < max_iterations:
+            solution_changed = False
+            # Try adding a point
+            for idx_to_add in self.generate_indices_add():
+                candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add)
+                if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > 1e-8:
+                    self.accept_add(idx_to_add, candidate_objective, add_within_cluster, add_for_other_clusters)
+                    solution_changed = True
+                    objectives.append((self.objective, f"added {idx_to_add} from cluster {self.clusters[idx_to_add]}"))
+                    selections.append(self.selection.copy())
+                    break
+            # Try swapping a selected point and unselected point
+            if not solution_changed:
+                for idx_to_add, idx_to_remove in self.generate_indices_swap():
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idx_to_add, idx_to_remove)
+                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > 1e-8:
+                        self.accept_swap(idx_to_add, idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
+                        solution_changed = True
+                        objectives.append((self.objective, f"swapped {idx_to_remove} for {idx_to_add} in cluster {self.clusters[idx_to_add]}"))
+                        selections.append(self.selection.copy())
+                        break
+            # Try swapping two selected points with one unselected point
+            if not solution_changed:
+                for (idx_to_add1, idx_to_add2), idx_to_remove in self.generate_indices_doubleswap():
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_doubleswap((idx_to_add1, idx_to_add2), idx_to_remove)
+                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > 1e-8:
+                        self.accept_doubleswap((idx_to_add1, idx_to_add2), idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
+                        solution_changed = True
+                        objectives.append((self.objective, f"doubleswapped {idx_to_remove} for {idx_to_add1} and {idx_to_add2} in cluster {self.clusters[idx_to_add1]}"))
+                        selections.append(self.selection.copy())
+                        break
+            # Try removing a point
+            if not solution_changed:
+                for idx_to_remove in self.generate_indices_remove():
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove)
+                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > 1e-8:
+                        self.accept_remove(idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
+                        solution_changed = True
+                        objectives.append((self.objective, f"removed {idx_to_remove} from cluster {self.clusters[idx_to_remove]}"))
+                        selections.append(self.selection.copy())
+                        break
+            if not solution_changed:
+                break
+            else:
+                iteration += 1
+                if iteration % 50 == 0:
+                    print(f"Iteration {iteration}: Objective = {self.objective}")
+
+        return objectives, selections
+
+        
+
+    def generate_indices_add(self):
+        """
+        Generates a list of indices to add to the solution.
+        """
+        yield from np.flatnonzero(~self.selection)
+
+    def generate_indices_swap(self):
+        """
+        Generates a list of indices to swap in the solution.
+        """
+        for cluster in self.unique_clusters:
+            clusters_mask = self.clusters == cluster
+            selected = np.where(clusters_mask & self.selection)[0]
+            unselected = np.where(clusters_mask & ~self.selection)[0]
+            for pair in itertools.product(unselected, selected):
+                yield pair
+
+    def generate_indices_doubleswap(self):
+        """
+        Generates a list of indices to swap in the solution.
+        """
+        for cluster in self.unique_clusters:
+            clusters_mask = self.clusters == cluster
+            selected = np.where(clusters_mask & self.selection)[0]
+            unselected = np.where(clusters_mask & ~self.selection)[0]
+            for idx in selected:
+                for other_1, other_2 in itertools.combinations(unselected, 2):
+                    yield (other_1, other_2), idx
+
+    def generate_indices_remove(self):
+        """
+        Generates a list of indices to remove from the solution.
+        """
+        for cluster in self.unique_clusters:
+            if len(self.selection_per_cluster[cluster]) > 1:
+                for idx in self.selection_per_cluster[cluster]:
+                    yield idx
