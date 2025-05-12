@@ -29,8 +29,8 @@ class Solution:
         self.unique_clusters = np.unique(self.clusters)
         self.selection_cost = selection_cost
 
-        self.inter_normalization = (len(self.unique_clusters) * (len(self.unique_clusters) - 1) / 2) / inter_factor # normalization factor for inter cluster distances
-        self.intra_normalization = len(self.unique_clusters) / intra_factor # normalization factor for intra cluster distances
+        self.inter_normalization = (len(self.unique_clusters) * (len(self.unique_clusters) - 1) / 2) * inter_factor # normalization factor for inter cluster distances
+        self.intra_normalization = len(self.unique_clusters) * intra_factor # normalization factor for intra cluster distances
 
         # Process initial representation to optimize for comparisons speed
         self.points_per_cluster = {cluster: set(np.where(self.clusters == cluster)[0]) for cluster in self.unique_clusters} #points in every cluster
@@ -126,7 +126,7 @@ class Solution:
         return True
 
     @staticmethod
-    def generate_centroid_solution(distances, clusters, selection_cost=0.1):
+    def generate_centroid_solution(distances, clusters, selection_cost=0.1, intra_factor=1.0, inter_factor=2.0):
         """
         Generates an initial solution by selecting the centroid for every cluster.
 
@@ -158,10 +158,10 @@ class Solution:
             centroid = np.argmin(np.sum(cluster_distances, axis=1))
             selection[cluster_points[centroid]] = True
 
-        return Solution(distances, clusters, selection, selection_cost)
+        return Solution(distances, clusters, selection, selection_cost, intra_factor=intra_factor, inter_factor=inter_factor)
     
     @staticmethod
-    def generate_random_solution(distances, clusters, selection_cost=0.1, max_fraction=0.1, seed=None):
+    def generate_random_solution(distances, clusters, selection_cost=0.1, max_fraction=0.1, intra_factor=1.0, inter_factor=2.0, seed=None):
         """
         Generates a random initial solution with up to X% of the points selected,
         ensuring at least one point per cluster is selected.
@@ -211,7 +211,7 @@ class Solution:
         additional_points = np.random.choice(remaining_points, size=num_additional_points, replace=False)
         selection[additional_points] = True
 
-        return Solution(distances, clusters, selection, selection_cost)
+        return Solution(distances, clusters, selection, selection_cost, intra_factor=intra_factor, inter_factor=inter_factor)
 
     def evaluate_add(self, idx_to_add):
         """
@@ -873,99 +873,93 @@ class Solution:
 
         return objectives, selections
 
-    def simulated_annealing(self, max_iterations=1000, initial_temperature=1.0, cooling_rate=0.99):
+    def simulated_annealing(self, max_iterations=1000, min_temperature=1e-6, temperature=1.0, cooling_rate=0.99, acceptance_scaling=1.0):
         """
-        Perform simulated annealing to find a (local) optimal solution.
+        Perform a local search to find a (local) optimal solution.
+        NOTE: This version picks a random move to make rather than structurally exhausting all options.
         
         Parameters:
         -----------
         max_iterations: int
             The maximum number of iterations to perform.
-        initial_temperature: float
+        min_temperature: float
+            The minimum temperature for the annealing process, searching halts when temperature drops below this.
+        temperature: float
             The initial temperature for the annealing process.
         cooling_rate: float
-            The rate at which the temperature decreases.
+            The rate at which the temperature decreases over iterations.
         """
         if not self.feasible:
-            raise ValueError("The solution is infeasible, cannot perform simulated annealing.")
+            raise ValueError("The solution is infeasible, cannot perform local search.")
         
         iteration = 0
-        temperature = initial_temperature
         objectives = [(self.objective, "start")]
         selections = [self.selection.copy()]
 
+        memory = (self.objective, self.selection.copy())
+
         solution_changed = False
-        times_unchanged = 0
-        while iteration < max_iterations:
+        no_changes = 0
+        while iteration < max_iterations and temperature > min_temperature:
             solution_changed = False
-            operations = [
-                ("add", self.generate_indices_add),
-                ("swap", self.generate_indices_swap),
-                ("doubleswap", self.generate_indices_doubleswap),
-                ("remove", self.generate_indices_remove),
-            ]
-            np.random.shuffle(operations)  # Randomize the order of operations
-
-            for operation, generator in operations:
-                if operation == "add":
-                    for idx_to_add in generator():
-                        candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add)
-                        delta_objective = round(candidate_objective - self.objective, 6)
-                        if delta_objective < 0 or np.random.rand() < np.exp(-delta_objective / temperature):
-                            self.accept_add(idx_to_add, candidate_objective, add_within_cluster, add_for_other_clusters)
-                            solution_changed = True
-                            objectives.append((self.objective, f"added {idx_to_add} from cluster {self.clusters[idx_to_add]}"))
-                            selections.append(self.selection.copy())
-                            break
-
-                elif operation == "swap":
-                    for idx_to_add, idx_to_remove in generator():
-                        candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idx_to_add, idx_to_remove)
-                        delta_objective = round(candidate_objective - self.objective, 6)
-                        if delta_objective < 0 or np.random.rand() < np.exp(-delta_objective / temperature):
-                            self.accept_swap(idx_to_add, idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
-                            solution_changed = True
-                            objectives.append((self.objective, f"swapped {idx_to_remove} for {idx_to_add} in cluster {self.clusters[idx_to_add]}"))
-                            selections.append(self.selection.copy())
-                            break
-
-                elif operation == "doubleswap":
-                    for (idx_to_add1, idx_to_add2), idx_to_remove in generator():
-                        candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_doubleswap((idx_to_add1, idx_to_add2), idx_to_remove)
-                        delta_objective = round(candidate_objective - self.objective, 6)
-                        if delta_objective < 0 or np.random.rand() < np.exp(-delta_objective / temperature):
-                            self.accept_doubleswap((idx_to_add1, idx_to_add2), idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
-                            solution_changed = True
-                            objectives.append((self.objective, f"doubleswapped {idx_to_remove} for {idx_to_add1} and {idx_to_add2} in cluster {self.clusters[idx_to_add1]}"))
-                            selections.append(self.selection.copy())
-                            break
-
-                elif operation == "remove":
-                    for idx_to_remove in generator():
-                        candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove)
-                        delta_objective = round(candidate_objective - self.objective, 6)
-                        if delta_objective < 0 or np.random.rand() < np.exp(-delta_objective / temperature):
-                            self.accept_remove(idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
-                            solution_changed = True
-                            objectives.append((self.objective, f"removed {idx_to_remove} from cluster {self.clusters[idx_to_remove]}"))
-                            selections.append(self.selection.copy())
-                            break
-
-                if solution_changed:
-                    times_unchanged = 0
-                    break
-                else:
-                    times_unchanged += 1
-                    if times_unchanged > 10:
-                        return objectives, selections
-                    
+            for move_type, move_content in self.generate_random_moves():
+                if move_type == "add":
+                    idx_to_add = move_content
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add)
+                    delta_objective = round(candidate_objective - self.objective, 6)
+                    if delta_objective < 0 or np.random.rand() < np.exp(-delta_objective * acceptance_scaling / temperature):
+                        self.accept_add(idx_to_add, candidate_objective, add_within_cluster, add_for_other_clusters)
+                        solution_changed = True
+                        objectives.append((self.objective, f"added {idx_to_add} from cluster {self.clusters[idx_to_add]} (temperature={temperature})"))
+                        selections.append(self.selection.copy())
+                        break
+                elif move_type == "swap":
+                    idx_to_add, idx_to_remove = move_content
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idx_to_add, idx_to_remove)
+                    delta_objective = round(candidate_objective - self.objective, 6)
+                    if delta_objective < 0 or np.random.rand() < np.exp(-delta_objective * acceptance_scaling / temperature):
+                        self.accept_swap(idx_to_add, idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
+                        solution_changed = True
+                        objectives.append((self.objective, f"swapped {idx_to_remove} for {idx_to_add} in cluster {self.clusters[idx_to_add]} (temperature={temperature})"))
+                        selections.append(self.selection.copy())
+                        break
+                elif move_type == "doubleswap":
+                    (idx_to_add1, idx_to_add2), idx_to_remove = move_content
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_doubleswap((idx_to_add1, idx_to_add2), idx_to_remove)
+                    delta_objective = round(candidate_objective - self.objective, 6)
+                    if delta_objective < 0 or np.random.rand() < np.exp(-delta_objective * acceptance_scaling / temperature):
+                        self.accept_doubleswap((idx_to_add1, idx_to_add2), idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
+                        solution_changed = True
+                        objectives.append((self.objective, f"doubleswapped {idx_to_remove} for {idx_to_add1} and {idx_to_add2} in cluster {self.clusters[idx_to_add1]}"))
+                        selections.append(self.selection.copy())
+                        break
+                elif move_type == "remove":
+                    idx_to_remove = move_content
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove)
+                    delta_objective = round(candidate_objective - self.objective, 6)
+                    if delta_objective < 0 or np.random.rand() < np.exp(-delta_objective * acceptance_scaling / temperature):
+                        self.accept_remove(idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
+                        solution_changed = True
+                        objectives.append((self.objective, f"removed {idx_to_remove} from cluster {self.clusters[idx_to_remove]}"))
+                        selections.append(self.selection.copy())
+                        break
             # Cool down the temperature
-            temperature *= cooling_rate
+            temperature = temperature * cooling_rate
             iteration += 1
-
+            if solution_changed:
+                if self.objective < memory[0]:
+                    memory = (self.objective, self.selection.copy())
+                no_changes = 0
+            else:
+                no_changes += 1
+                if no_changes > 10:
+                    break
             if iteration % 50 == 0:
                 print(f"Iteration {iteration}: Objective = {self.objective}, Temperature = {temperature}")
+            if temperature < min_temperature:
+                break
 
+        print(f"Best solution found: {memory[0]} with {np.sum(memory[1])} points selected.")
         return objectives, selections
 
     def generate_indices_add(self):
