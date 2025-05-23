@@ -1,4 +1,5 @@
 import solution.solution_optimized as solution
+from scipy.spatial.distance import squareform
 # Global imports
 import numpy as np
 import itertools
@@ -70,7 +71,7 @@ def test_solution_correctness_1():
 
     solution_object = solution.Solution(distances, clusters, selection=selection, selection_cost=selection_cost)
     # Check if the distances are correctly copied
-    np.testing.assert_array_equal(solution_object.distances, distances)
+    np.testing.assert_array_equal(squareform(solution_object.distances), distances)
     # Check if the clusters are correctly copied
     np.testing.assert_array_equal(solution_object.clusters, clusters)
     # Check if the selection is correctly initiated
@@ -879,7 +880,7 @@ def test_evaluate_doubleswap_2():
         [0.7, 0.3, 0.5, 0.0, 0.2, 0.2, 0.9], #0
         [0.6, 0.1, 0.6, 0.2, 0.0, 0.3, 0.9], #1
         [0.5, 0.1, 0.7, 0.2, 0.3, 0.0, 0.9], #1
-        [0.9, 0.1, 0.9, 0.9, 0.9, 0.9, 0.9]  #0
+        [0.9, 0.1, 0.9, 0.9, 0.9, 0.9, 0.0]  #0
     ], dtype=np.float32)
     clusters = np.array(
         [0, 0, 0, 0, 1, 1, 0], dtype=np.int32
@@ -1062,7 +1063,7 @@ def test_accept_doubleswap_2():
         [0.7, 0.3, 0.5, 0.0, 0.2, 0.2, 0.9], #0
         [0.6, 0.1, 0.6, 0.2, 0.0, 0.3, 0.9], #1
         [0.5, 0.1, 0.7, 0.2, 0.3, 0.0, 0.9], #1
-        [0.9, 0.1, 0.9, 0.9, 0.9, 0.9, 0.9]  #0
+        [0.9, 0.1, 0.9, 0.9, 0.9, 0.9, 0.0]  #0
     ], dtype=np.float32)
     clusters = np.array(
         [0, 0, 0, 0, 1, 1, 0], dtype=np.int32
