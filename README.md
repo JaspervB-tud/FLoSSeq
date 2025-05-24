@@ -47,11 +47,11 @@ For the local search, the general strategy for now is to start from a centroid s
 ### Parameters
 $$
 \begin{array}{ll}
-G &\text{set of all genomes} \\[4pt]
-t: G \rightarrow \mathbb{N} &\text{taxonomic mapping} \\[4pt]
-\sim_t &\text{equivalence relation for all genomes based on taxonomic mapping} \\[4pt]
-\{ {T_1, T_2, \ldots}, T_m \} =: G \setminus \sim_t &\text{set of all taxonomic classes} \\[4pt]
-s: G \times G \rightarrow [0,1] \cap \mathbb{Q} &\text{similarity mapping between genomes} \\[4pt]
+G &\text{set of all genomes} \\
+t: G \rightarrow \mathbb{N} &\text{taxonomic mapping} \\
+\sim_t &\text{equivalence relation for all genomes based on taxonomic mapping} \\
+\{ {T_1, T_2, \ldots}, T_m \} =: G \setminus \sim_t &\text{set of all taxonomic classes} \\
+s: G \times G \rightarrow [0,1] \cap \mathbb{Q} &\text{similarity mapping between genomes} \\
 f: g \rightarrow \mathbb{R}_{\geq 0} &\text{cost for selecting a genome (generally constant)}
 \end{array}
 $$
@@ -61,22 +61,19 @@ $$
 \begin{array}{llr}
 x_g &= 
 \begin{cases}
-1, & \text{if genome } g \text{ is selected} \\
-0, & \text{otherwise}
-\end{cases} &\qquad \forall g \in G\\[12pt]
-
+    1, & \text{if genome } g \text{ is selected} \\
+    0, & \text{otherwise}
+\end{cases} &\qquad \forall g \in G\\
 y_{g,g'} &= 
 \begin{cases}
-1, & \text{if genome } g' \text{ is selected as representative for } g \\
-0, & \text{otherwise}
-\end{cases} &\qquad \forall g \sim_{t} g' \\[12pt]
-
+    1, & \text{if genome } g' \text{ is selected as representative for } g \\
+    0, & \text{otherwise}
+\end{cases} &\qquad \forall g \sim_{t} g' \\
 z_{g,g'} &=
 \begin{cases}
-1, & \text{if genome } g \text{ and } g' \text{ are both selected} \\
-0, & \text{otherwise}
-\end{cases} &\qquad \forall g \not\sim_{t} g' \\[12pt]
-
+    1, & \text{if genome } g \text{ and } g' \text{ are both selected} \\
+    0, & \text{otherwise}
+\end{cases} &\qquad \forall g \not\sim_{t} g' \\
 q_{i,j} &\geq 0 \text{ penalty for distance between closest selected genomes for } T_i \text{ and } T_j \text{} &\qquad \forall T_i \neq T_j
 \end{array}
 $$
@@ -91,16 +88,14 @@ $$
 ### Constraints
 $$
 \begin{array}{lllc}
-\sum_{g' \sim_t g}y_{g,g'} & \geq 1 & \forall g \in G &(2) \\[2pt]
-y_{g,g'} & \leq x_{g'} & \forall g \sim_t g' &(3) \\[12pt]
-
-z_{g,g'} & \geq -1 + \left(x_g + x_{g'}\right) & \forall g \not\sim_t g' &(4a) \\[2pt]
-z_{g,g'} & \leq 0.5\left(x_g + x_{g'}\right) & \forall g \not\sim_t g' &(4b) \\[2pt]
-q_{g,g'} & \geq s(g,g')z_{g,g'} & \forall g \not\sim_t g' &(5) \\[12pt]
-
-x_g \in \{0,1\} & & \forall g \in G &(6) \\[2pt]
-y_{g,g'} \in \{0,1\} & & \forall g \sim_t g' &(7) \\[2pt]
-z_{g,g'} \in \{0,1\} & & \forall g \not\sim_t g' &(8) \\[2pt]
+\sum_{g' \sim_t g}y_{g,g'} & \geq 1 & \forall g \in G &(2) \\
+y_{g,g'} & \leq x_{g'} & \forall g \sim_t g' &(3) \\
+z_{g,g'} & \geq -1 + \left(x_g + x_{g'}\right) & \forall g \not\sim_t g' &(4a) \\
+z_{g,g'} & \leq 0.5\left(x_g + x_{g'}\right) & \forall g \not\sim_t g' &(4b) \\
+q_{g,g'} & \geq s(g,g')z_{g,g'} & \forall g \not\sim_t g' &(5) \\
+x_g \in \{0,1\} & & \forall g \in G &(6) \\
+y_{g,g'} \in \{0,1\} & & \forall g \sim_t g' &(7) \\
+z_{g,g'} \in \{0,1\} & & \forall g \not\sim_t g' &(8) \\
 q_{T_i, T_j} \geq 0 & & \forall i \neq j &(9)
 \end{array}
 $$
