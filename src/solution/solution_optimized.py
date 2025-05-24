@@ -725,7 +725,7 @@ class Solution:
 
         return objectives, selections
 
-    def local_search_random(self, max_iterations=1000):
+    def local_search_random(self, max_iterations=1000, seed=None):
         """
         Perform a local search to find a (local) optimal solution.
         NOTE: This version picks a random move to make rather than structurally exhausting all options.
@@ -741,6 +741,9 @@ class Solution:
         iteration = 0
         objectives = [(self.objective, "start")]
         selections = [self.selection.copy()]
+
+        if type(seed) is int:
+            np.random.seed(seed)
 
         solution_changed = False
         while iteration < max_iterations:
