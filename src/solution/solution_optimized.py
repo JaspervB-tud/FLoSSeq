@@ -3,6 +3,7 @@ from scipy.spatial.distance import squareform
 import itertools
 import math
 from decimal import Decimal, getcontext
+from concurrent.futures import ProcessPoolExecutor, as_completed, wait, ALL_COMPLETED
 
 
 class Solution:
@@ -875,6 +876,43 @@ class Solution:
                     print(f"Iteration {iteration}: Objective = {self.objective}")
 
         return objectives, selections
+
+    def local_search_parallel(self, max_iterations=1000, num_cores=None):
+        if not self.feasible:
+            raise ValueError("The solution is infeasible, cannot perform local search.")
+        
+        iteration = 0
+        objectives = [(self.objective, "start")]
+        selections = [self.selection.copy()]
+
+        solution_changed = False
+        while iteration < max_iterations:
+            solution_changed = False
+
+            with ProcessPoolExecutor(max_workers=num_cores) as executor:
+                futures = {executor.submit(self.evaluate_add, idx): idx for idx in self.generate_indices_add()}
+                try:
+                    for future in as_completed(futures):
+                        idx_to_add = futures[future]
+                        candidate_objective, add_within_cluster, add_for_other_clusters = future.result()
+                        if candidate_objective < self.objective and abs(candidate_objective - self.objective) > 1e-8:
+                            print("Accepting new solution in iteration", iteration)
+                            self.accept_add(idx_to_add, candidate_objective, add_within_cluster, add_for_other_clusters)
+                            solution_changed = True
+
+                            # Stop spawning new workers
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            break
+                except Exception as e:
+                    print(f"Exception occurred: {e}")
+                finally:
+                    for future in futures:
+                        future.cancel()
+
+            if not solution_changed:
+                break
+            else:
+                iteration += 1
 
     def simulated_annealing(self, max_iterations=1000, initial_temperature=1.0, cooling_rate=0.99):
         """
