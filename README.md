@@ -17,22 +17,13 @@ This downloads the metadata (primarily the taxid) for the genomes downloaded thr
 For the local search, the general strategy for now is to start from a centroid solution (i.e. select a centroid for every taxon), and to perform local search until an iteration limit or local optimal point has been reached. With this starting point (and in general) it is important to note that in order to remain feasible, we should also consider swaps (i.e. removing one point and adding another) which increases the neighborhoods.
 
 * TO-DO
-- Implement local search
-    + add a point to the solution (done)
-    + remove a point and replace with two points form same cluster (done)
-    + swap pair of points within cluster
-    + swap pair of points of different clusters
-        - note that here we should make sure that we remain feasible
-    + remove a point
-        - in general this will often lead to a better solution if it is a feasible move
-- Optimization
-    + now we recalculate the objective value from scratch when checking the neighborhood, but this can be sped up by only considering the terms that change
-- Utility
-    + initialization is now done by finding centroids for every cluster, but this can be swapped for:
-        - random initialization (must be feasible)
-        - selecting all points
-        - linearization of FLP
-    + multi-start option with multiple cores in order to prevent "bad" local optima
+- Implement parallel local search
+    + generate neighborhood (i.e. local moves)
+    + batch local moves to pass on to processes
+    + evaluate local moves in parallel and stop when improvement is found
+        - possibly allow for process to finish processing batch (overhead is not too significant if batch is small)
+- Implement Simulated Annealing
+    + mostly similar to local search, but needs to deal with problems of parallelism
 - Low-priority
     + visualization of the local search (how does the solution change over time)
 
