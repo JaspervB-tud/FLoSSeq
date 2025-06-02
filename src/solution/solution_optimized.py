@@ -1139,8 +1139,11 @@ def evaluate_add_helper_shm(
         -----------
         idx_to_add: int
             The index of the point to be added.
-        distances: np.ndarray
-            The condensed distance (between points) matrix.
+        distances: tuple
+            A tuple containing:
+            - shared memory name for the distances matrix.
+            - shape of the distance matrix.
+            - dtype of the distance matrix.
         clusters: np.ndarray
             The cluster assignments for each point.
         unique_clusters: np.ndarray
@@ -1170,7 +1173,7 @@ def evaluate_add_helper_shm(
         """
         cluster = clusters[idx_to_add]
         candidate_objective = objective + selection_cost # cost for adding the point
-        try:
+        try: #encapsulate in try-except-finally to handle shared memory
             D = shm.SharedMemory(name=distances[0])
             D_array = np.ndarray(distances[1], dtype=np.float32, buffer=D.buf)
 
@@ -1196,12 +1199,154 @@ def evaluate_add_helper_shm(
                     if cur_idx > -1:
                         candidate_objective += cur_max - get_distance(cluster, other_cluster, closest_distances_inter, unique_clusters.shape[0])
                         add_for_other_clusters.append((other_cluster, cur_max, cur_idx))
+
+            return candidate_objective, add_within_cluster, add_for_other_clusters
         except Exception as e:
             print(f"Error in evaluate_add_helper_shm: {e}")
             return None, None, None
         finally:
             D.close()
+
+def evaluate_swap_helper_shm(
+        idxs_to_add, idx_to_remove,
+        distances, clusters, unique_clusters, objective, selection_cost, num_points,
+        selection_per_cluster, nonselection_per_cluster,
+        closest_distances_intra, closest_distances_inter,
+        closest_points_intra, closest_points_inter):
+    """
+    Evaluates the effect of swapping a point for a (set of) point(s) in the solution 
+    without relying on an explicit instance of the Solution class.
+    NOTE: This function is designed to be used with shared memory for parallel processing!
+    NOTE: In the current implementation, there is no check for feasibility, so it is assumed
+            that the point can be added without violating any constraints!
+    Parameters:
+    -----------
+    idxs_to_add: int or list of int
+        The index or indices of the point(s) to be added.
+    idx_to_remove: int
+        The index of the point to be removed.
+    distances: tuple
+        A tuple containing:
+            - shared memory name for the distances matrix.
+            - shape of the distance matrix.
+            - dtype of the distance matrix.
+    clusters: np.ndarray
+        The cluster assignments for each point.
+    unique_clusters: np.ndarray
+        The unique clusters present in the solution.
+    objective: float
+        The current objective value of the solution.
+    selection_cost: float
+        The cost associated with selecting a point.
+    num_points: int
+        The total number of points in the dataset.
+    selection_per_cluster: dict
+        A dictionary mapping each cluster to a set of indices of selected points in that cluster.
+    nonselection_per_cluster: dict
+        A dictionary mapping each cluster to a set of indices of non-selected points in that cluster.
+    closest_distances_intra: np.ndarray
+        A 1D array containing the closest intra-cluster distances for each point.
+    closest_distances_inter: np.ndarray
+        An array containing the closest inter-cluster distances between clusters.
+    closest_points_intra: np.ndarray
+        A 1D array containing the closest points within each cluster for each point.
+    closest_points_inter: dict
+        A dictionary mapping each pair of clusters to their closest points (as tuples).
+        NOTE: The key tuples are always ordered with the smaller cluster index first.
+    Returns:
+    --------
+    candidate_objective: float
+        The objective value if the swap is made.
+    add_within_cluster: list
+        A list of tuples (index, closest_point, closest_distance) for points within the cluster of the new point that would be updated.
+    add_for_other_clusters: list
+        A list of tuples (other_cluster, closest_pair, similarity) for points in other clusters that would be updated.
+    """
+    # Check if a single index, or a list of indices is provided
+    try:
+        num_to_add = len(idxs_to_add)
+    except TypeError:
+        num_to_add = 1
+        idxs_to_add = [idxs_to_add]
+    candidate_objective = objective + (num_to_add - 1) * selection_cost # cost for adding and removing
+    cluster = clusters[idx_to_remove]
+    # Generate pool of alternative points to compare to
+    new_selection = set(selection_per_cluster[cluster])
+    for idx in idxs_to_add:
+        new_selection.add(idx)
+    new_selection.remove(idx_to_remove)
+    new_nonselection = set(nonselection_per_cluster[cluster])
+    new_nonselection.add(idx_to_remove)
+    try:
+        D = shm.SharedMemory(name=distances[0])
+        D_array = np.ndarray(distances[1], dtype=np.float32, buffer=D.buf)
+
+        # Calculate intra cluster distances for cluster of new point
+        #   - check if removed point was closest selected point for any of the unselected points -> if so, replace with new point
+        #   - check if added point(s) is closest selected point for any of the unselected points -> if so, replace
+        add_within_cluster = []
+        for idx in new_nonselection:
+            cur_closest_distance = closest_distances_intra[idx]
+            cur_closest_point = closest_points_intra[idx]
+            if cur_closest_point == idx_to_remove: #if point to be removed is closest for current, find new closest
+                cur_closest_distance = np.inf
+                for other_idx in new_selection:
+                    cur_dist = get_distance(idx, other_idx, D_array, num_points)
+                    if cur_dist < cur_closest_distance:
+                        cur_closest_distance = cur_dist
+                        cur_closest_point = other_idx
+                candidate_objective += cur_closest_distance - closest_distances_intra[idx]
+                add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
+            else: #point to be removed is not closest, check if newly added point is closer
+                cur_dists = [(get_distance(idx, idx_to_add, D_array, num_points), idx_to_add) for idx_to_add in idxs_to_add]
+                cur_dist, idx_to_add = min(cur_dists, key = lambda x: x[0])
+                if cur_dist < cur_closest_distance:
+                    candidate_objective += cur_dist - cur_closest_distance
+                    add_within_cluster.append((idx, idx_to_add, cur_dist))
+
+        # Calculate intra cluster distances for all other clusters
+        add_for_other_clusters = []
+        for other_cluster in unique_clusters:
+            if other_cluster != cluster:
+                cur_closest_similarity = get_distance(cluster, other_cluster, closest_distances_inter, unique_clusters.shape[0])
+                if other_cluster < cluster:
+                    cur_closest_point = closest_points_inter[other_cluster, cluster][1]
+                else:
+                    cur_closest_point = closest_points_inter[cluster, other_cluster][0]
+                cur_closest_pair = (-1, -1) #from -> to (from perspective of "other_cluster")
+                if cur_closest_point == idx_to_remove: #if point to be removed is closest for current, find new closest
+                    cur_closest_similarity = -np.inf
+                    for idx in selection_per_cluster[other_cluster]:
+                        for other_idx in new_selection:
+                            cur_similarity = 1.0 - get_distance(idx, other_idx, D_array, num_points)
+                            if cur_similarity > cur_closest_similarity:
+                                cur_closest_similarity = cur_similarity
+                                if other_cluster < cluster:
+                                    cur_closest_pair = (idx, other_idx)
+                                else:
+                                    cur_closest_pair = (other_idx, idx)
+                    candidate_objective += cur_closest_similarity - get_distance(cluster, other_cluster, closest_distances_inter, unique_clusters.shape[0])
+                    add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
+                else: #point to be removed is not closest, check if one of newly added points is closer
+                    for idx in selection_per_cluster[other_cluster]:
+                        cur_similarities = [(1.0 - get_distance(idx, idx_to_add, D_array, num_points), idx_to_add) for idx_to_add in idxs_to_add]
+                        cur_similarity, idx_to_add = max(cur_similarities, key = lambda x: x[0])
+                        if cur_similarity > cur_closest_similarity:
+                            cur_closest_similarity = cur_similarity
+                            if other_cluster < cluster:
+                                cur_closest_pair = (idx, idx_to_add)
+                            else:
+                                cur_closest_pair = (idx_to_add, idx)
+                    if cur_closest_pair[0] > -1:
+                        candidate_objective += cur_closest_similarity - get_distance(cluster, other_cluster, closest_distances_inter, unique_clusters.shape[0])
+                        add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))    
+                                     
         return candidate_objective, add_within_cluster, add_for_other_clusters
+    except Exception as e:
+        print(f"Error in evaluate_swap_helper_shm: {e}")
+        return None, None, None
+    finally:
+        D.close()
 
 def get_index(idx1, idx2, num_points):
     """
