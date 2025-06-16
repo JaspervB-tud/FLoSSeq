@@ -1274,11 +1274,14 @@ class Solution:
                             np.copyto(shared_closest_points_inter, self.closest_points_inter_array)
                             
                             event.clear() #reset event for current iteration
-                            results = [] #resest results for current iteration
+                            results = [] #resets results for current iteration
 
+                            num_solutions_tried = 0
                             # Try moves in batches
                             while True:
                                 batches = []
+                                num_this_loop = 0
+                                cur_batch_time = time.time()
                                 for _ in range(max_batches): #fill list with up to max_batches batches
                                     batch = [] #batch of moves
                                     try:
@@ -1288,9 +1291,11 @@ class Solution:
                                     except StopIteration:
                                         if len(batch) > 0:
                                             batches.append(batch)
+                                            num_this_loop += len(batch)
                                         break
                                     if len(batch) > 0:
                                         batches.append(batch)
+                                        num_this_loop += len(batch)
 
                                 # Process current collection of batches in parallel
                                 if len(batches) > 0:
@@ -1316,6 +1321,9 @@ class Solution:
                                         solution_changed = True
                                         move_type, move_content, candidate_objective, add_within_cluster, add_for_other_clusters = results[0]
                                         break
+                                    else:
+                                        num_solutions_tried += num_this_loop
+                                        print(f"Processed {num_solutions_tried} solutions in {time.time() - cur_batch_time:.4f}s, no improvement found yet.", flush=True)
 
                                 else: # No more tasks to process, break while loop
                                     break
