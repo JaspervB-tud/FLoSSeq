@@ -9,7 +9,7 @@ import traceback
 
 #TMP TEST
 class Solution:
-    def __init__(self, distances, clusters, selection=None, selection_cost=0.1, cost_per_cluster=False, seed=None):
+    def __init__(self, distances, clusters, selection=None, selection_cost=0.1, cost_per_cluster=0, seed=None):
         # Assert that distances and clusters have the same number of rows
         if distances.shape[0] != clusters.shape[0]:
             raise ValueError("Number of points is different between distances and clusters.")
@@ -45,11 +45,22 @@ class Solution:
         # cost_per_cluster is indexed by cluster indices
         self.selection_cost = selection_cost
         self.cost_per_cluster = np.zeros(self.unique_clusters.shape[0], dtype=np.float64)
-        if cost_per_cluster:
-            for cluster in self.unique_clusters:
+        for cluster in self.unique_clusters:
+            if cost_per_cluster == 0: #default behavior, set to selection cost
+                self.cost_per_cluster[cluster] = selection_cost
+            elif cost_per_cluster == 1: #set to 1 / number of points in cluster
                 self.cost_per_cluster[cluster] = 1 / np.sum(self.clusters == cluster)
-        else:
-            self.cost_per_cluster.fill(selection_cost)
+            elif cost_per_cluster == 2:
+                # Define the average distance in a cluster as the average distance
+                # of all points in the cluster to the centroid of the cluster.
+                cluster_points = np.where(self.clusters == cluster)[0]
+                centroid = np.argmin(np.sum(distances[np.ix_(cluster_points, cluster_points)], axis=1))
+                self.cost_per_cluster[cluster] = np.mean(distances[centroid, cluster_points])
+            elif cost_per_cluster == 3:
+                # Define the average distance in a cluster as the average distance
+                # of all points in the cluster to the closest point in the cluster.
+                cluster_points = np.where(self.clusters == cluster)[0]
+                self.cost_per_cluster[cluster] = np.mean([np.min(distances[point, cluster_points]) for point in cluster_points])
         self.num_points = distances.shape[0]
 
         # Process initial representation to optimize for comparisons speed
