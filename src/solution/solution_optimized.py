@@ -319,7 +319,7 @@ class Solution:
 
     def evaluate_add(self, idx_to_add, local_search=False):
         """
-        Evaluates whether the proposed addition improves the current solution.
+        Evaluates the effect of adding an unselected point to the solution.
 
         Parameters:
         -----------
@@ -422,7 +422,8 @@ class Solution:
          
     def evaluate_swap(self, idx_to_add: int, idx_to_remove: int):
         """
-        Evaluates whether the proposed swap improves the current solution.
+        Evaluates the effect of swapping a selected point for an unselected point 
+        in the solution.
 
         Parameters:
         -----------
@@ -568,7 +569,8 @@ class Solution:
 
     def evaluate_doubleswap(self, idxs_to_add, idx_to_remove: int):
         """
-        Evaluates whether the proposed double swap improves the current solution.
+        Evaluates the effect of swapping a selected point for a pair of 
+        unselected points in the solution.
 
         Parameters:
         -----------
@@ -729,7 +731,7 @@ class Solution:
 
     def evaluate_remove(self, idx_to_remove: int, local_search: bool = False):
         """
-        Evaluates whether the proposed removal improves the current solution.
+        Evaluates the effect of removing a selected point from the solution.
 
         Parameters:
         -----------
@@ -1746,15 +1748,16 @@ Solution class, but rather use shared memory as well as initialized variables to
 in parallel.
 """
 def evaluate_add_mp(
-        idx_to_add, objective,
-        selection_per_cluster, nonselection
+        idx_to_add: int, objective: float,
+        selection_per_cluster: dict, nonselection: set
         ):
         """
-        Evaluates the effect of adding a point to the solution without relying on an explicit instance
-        of the Solution class.
-        NOTE: This function is designed to be used with shared memory for parallel processing!
-        NOTE: In the current implementation, there is no check for feasibility, so it is assumed
-                that the point can be added without violating any constraints!
+        Evaluates the effect of adding an unselected point to the solution.
+        NOTE: this function relies on shared memory, as well as existing variables that
+        have to be initialized (those starting with an underscore) when spawning a worker 
+        process!
+        NOTE: in the current implementation, there is no check for feasibility, so it is assumed
+        that the point can be added without violating any constraints!
 
         Parameters:
         -----------
@@ -1782,8 +1785,9 @@ def evaluate_add_mp(
         # Inter cluster distances for other clusters
         # NOTE: This can only increase the inter cluster cost, so if objective is already worse, we can skip this
         add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
-        if candidate_objective > objective and np.abs(candidate_objective - objective) > 1e-6:
+        if candidate_objective > objective and np.abs(candidate_objective - objective) > PRECISION_THRESHOLD:
             return -1, -1, -1 #-1, -1, -1 to signify no improvement
+        
         for other_cluster in _unique_clusters:
             if other_cluster != cluster:
                 #cur_max = get_distance(cluster, other_cluster, _closest_distances_inter, _unique_clusters.shape[0])
@@ -1799,20 +1803,22 @@ def evaluate_add_mp(
                     candidate_objective += cur_max - _closest_distances_inter[cluster, other_cluster]
                     add_for_other_clusters.append((other_cluster, cur_max, cur_idx))
 
-        if candidate_objective < objective and np.abs(candidate_objective - objective) > 1e-6:
+        if candidate_objective < objective and np.abs(candidate_objective - objective) > PRECISION_THRESHOLD:
             return candidate_objective, add_within_cluster, add_for_other_clusters
         else:
             return -1, -1, -1  # -1, -1, -1 to signify no improvement
 
 def evaluate_swap_mp(
-        idxs_to_add, idx_to_remove, objective,
-        selection_per_cluster, nonselection):
+        idxs_to_add, idx_to_remove: int, objective: float,
+        selection_per_cluster: dict, nonselection: set):
     """
-    Evaluates the effect of swapping a point for a (set of) point(s) in the solution 
-    without relying on an explicit instance of the Solution class.
-    NOTE: This function is designed to be used with shared memory for parallel processing!
-    NOTE: In the current implementation, there is no check for feasibility, so it is assumed
-            that the swap can be performed without violating any constraints!
+    Evaluates the effect of swapping a selected point for an unselected point (or multiple)
+    in the solution.
+    NOTE: this function relies on shared memory, as well as existing variables that
+    have to be initialized (those starting with an underscore) when spawning a worker
+    process!
+    NOTE: in the current implementation, there is no check for feasibility, so it is assumed
+    that the swap can be performed without violating any constraints!
     
     Parameters:
     -----------
@@ -1896,21 +1902,22 @@ def evaluate_swap_mp(
                 if cur_closest_pair[0] > -1:
                     candidate_objective += cur_closest_similarity - _closest_distances_inter[cluster, other_cluster]
                     add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
-    if candidate_objective < objective and np.abs(candidate_objective - objective) > 1e-6:
+    if candidate_objective < objective and np.abs(candidate_objective - objective) > PRECISION_THRESHOLD:
         return candidate_objective, add_within_cluster, add_for_other_clusters
     else:
         return -1, -1, -1  # -1, -1, -1 to signify no improvement
 
 def evaluate_remove_mp(
-        idx_to_remove, objective,
-        selection_per_cluster, nonselection,
+        idx_to_remove: int, objective: float,
+        selection_per_cluster: dict, nonselection: set,
         ):
     """
-    Evaluates the effect of removing a point from the solution without relying on an explicit instance
-    of the Solution class.
-    NOTE: This function is designed to be used with shared memory for parallel processing!
-    NOTE: In the current implementation, there is no check for feasibility, so it is assumed
-            that the point can be removed without violating any constraints!
+    Evaluates the effect of removing a selected point from the solution.
+    NOTE: this function relies on shared memory, as well as existing variables that
+    have to be initialized (those starting with an underscore) when spawning a worker
+    process!
+    NOTE: in the current implementation, there is no check for feasibility, so it is assumed
+    that the swap can be performed without violating any constraints!
 
     Parameters:
     -----------
@@ -1955,7 +1962,7 @@ def evaluate_remove_mp(
                 candidate_objective += cur_closest_similarity - _closest_distances_inter[cluster, other_cluster]
                 add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
     
-    if candidate_objective > objective and np.abs(candidate_objective - objective) > 1e-6:
+    if candidate_objective > objective and np.abs(candidate_objective - objective) > PRECISION_THRESHOLD:
         return -1, -1, -1
     
     # Calculate intra cluster distances for cluster of removed point
@@ -1973,7 +1980,7 @@ def evaluate_remove_mp(
             candidate_objective += cur_closest_distance - _closest_distances_intra[idx]
             add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
 
-    if candidate_objective < objective and np.abs(candidate_objective - objective) > 1e-6:
+    if candidate_objective < objective and np.abs(candidate_objective - objective) > PRECISION_THRESHOLD:
         return candidate_objective, add_within_cluster, add_for_other_clusters
     else:
         return -1, -1, -1
@@ -2019,7 +2026,7 @@ def init_worker(
     unique_clusters: np.ndarray
         Array of unique cluster indices.
     cost_per_cluster: np.ndarray
-        Costs associated with selecting a point.
+        Costs associated with selecting a point from a cluster.
         NOTE: This cost may be different for each cluster.
     num_points: int
         Total number of points in the dataset.
@@ -2132,7 +2139,7 @@ def process_batch_result(result, results_list):
     """
     Adds the result of a move evaluation to the results list if the candidate objective is
     an improvement (otherwise it is ignored).
-    NOTE: This modifies the results_list in place.
+    NOTE: this modifies the results_list in place.
 
     Parameters:
     -----------
@@ -2146,7 +2153,7 @@ def process_batch_result(result, results_list):
     if candidate_objective > -1:
         results_list.append((move_type, move_content, candidate_objective, add_within_cluster, add_for_other_clusters))
 
-def get_index(idx1, idx2, num_points):
+def get_index(idx1: int, idx2: int, num_points: int):
     """
     Returns the index in the condensed distance matrix for the given pair of indices.
 
@@ -2170,11 +2177,12 @@ def get_index(idx1, idx2, num_points):
         idx1, idx2 = idx2, idx1
     return num_points * idx1 - (idx1 * (idx1 + 1)) // 2 + idx2 - idx1 - 1
 
-def get_distance(idx1, idx2, distances, num_points):
+def get_distance(idx1: int, idx2: int, distances: np.ndarray, num_points: int):
     """
     Returns the distance between two points which has to be
     converted since the distance matrix is stored as a
     condensed matrix.
+
     Parameters:
     -----------
     idx1: int
@@ -2185,6 +2193,7 @@ def get_distance(idx1, idx2, distances, num_points):
         Condensed distance matrix.
     num_points: int
         Total number of points in the dataset.
+        
     Returns:
     --------
     float
