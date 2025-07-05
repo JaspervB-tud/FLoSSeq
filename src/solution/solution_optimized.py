@@ -2148,7 +2148,6 @@ class SolutionAverage(Solution):
                 candidate_objective += (new_sum/new_num_pairs) - (old_sum/old_num_pairs) #change in objective
                 add_for_other_clusters.append((other_cluster, new_sum))
                 
-
         return candidate_objective, add_within_cluster, add_for_other_clusters
 
     def accept_add(self, idx_to_add: int, candidate_objective: float, add_within_cluster: list, add_for_other_clusters: list):
@@ -2437,6 +2436,142 @@ class SolutionAverage(Solution):
         # Update objective value
         self.objective = candidate_objective
 
+    def accept_move(self, move_type: str, move_content, candidate_objective: float, add_within_cluster: list, add_for_other_clusters: list):
+        """
+        Accepts a move to the solution.
+        NOTE: This assumes that the initial solution and the move
+        are feasible and will not check for this.
+
+        PARAMETERS:
+        -----------
+        move_type: str
+            The type of the move (e.g., "add", "swap", "doubleswap", "remove").
+        move_content: int or tuple
+            The content of the move (e.g., index to add, indices to swap).
+        candidate_objective: float
+            The objective value of the solution after the move.
+        add_within_cluster: list of tuples
+            The changes to be made within the cluster of the added point.
+            Structure: [(index_to_change, new_closest_point, new_distance)]
+        add_for_other_clusters: list of tuples
+            The changes to be made for other clusters.
+            Structure: [(index_other_cluster, cur_closest_pair, new_distance)]
+            Note that for cur_closest_pair, the first index is in the cluster with lowest index.
+        """
+        if move_type == "add":
+            idx_to_add = move_content
+            self.accept_add(idx_to_add, candidate_objective, add_within_cluster, add_for_other_clusters)
+        elif move_type == "swap" or move_type == "doubleswap":
+            idxs_to_add, idx_to_remove = move_content
+            self.accept_swap(idxs_to_add, idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
+        elif move_type == "remove":
+            idx_to_remove = move_content
+            self.accept_remove(idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
+
+    def local_search(self, max_iterations: int = 10_000,
+                           random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
+                           logging: bool = False, logging_frequency: int = 500,
+                           ):
+        """
+        Perform local search to find a (local) optimal solution. Allows for both
+        single-core and multi-core execution.
+        
+        Parameters:
+        -----------
+        max_iterations: int
+            The maximum number of iterations to perform.
+        random_move_order: bool
+            If True, the order of moves (add, swap, doubleswap,
+            remove) is randomized.
+        random_index_order: bool
+            If True, the order of indices for moves is randomized.
+            NOTE: if random_move_order is True, but this is false,
+            all moves of a particular type will be tried before
+            moving to the next move type, but the order of moves
+            is random).
+        move_order: list
+            If provided, this list will be used to determine the
+            order of moves. If random_move_order is True, this
+            list will be shuffled before use.
+            NOTE: this list should contain the following move types (as strings):
+                - "add"
+                - "swap"
+                - "doubleswap"
+                - "remove"
+            NOTE: by leaving out a move type, it will not be
+            considered in the local search.
+        logging: bool
+            If True, information about the local search will be printed.
+        logging_frequency: int
+            If logging is True, information will be printed every
+            logging_frequency iterations.
+
+        Returns:
+        --------
+        time_per_iteration: list of floats
+            The time taken for each iteration.
+            NOTE: this is primarily for logging purposes
+        objectives: list of floats
+            The objective value after each iteration.
+        """
+        # Validate input parameters
+        if not isinstance(max_iterations, int) or max_iterations < 1:
+            raise ValueError("max_iterations must be a positive integer.")
+        if not isinstance(random_move_order, bool):
+            raise ValueError("random_move_order must be a boolean value.")
+        if not isinstance(random_index_order, bool):
+            raise ValueError("random_index_order must be a boolean value.")
+        if not self.feasible:
+            raise ValueError("The solution is infeasible, cannot perform local search.")
+
+        # Initialize variables
+        iteration = 0
+        time_per_iteration = []
+        objectives = []
+        solution_changed = False
+
+        while iteration < max_iterations:
+            objectives.append(self.objective)
+            solution_changed = False
+            move_generator = self.generate_moves(
+                random_move_order=random_move_order, 
+                random_index_order=random_index_order, 
+                order=move_order
+            )
+            current_iteration_time = time.time()
+            for move_type, move_content in move_generator:
+                if move_type == "add":
+                    idx_to_add = move_content
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=True)
+                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
+                        solution_changed = True
+                        break
+                elif move_type == "swap" or move_type == "doubleswap":
+                    idxs_to_add, idx_to_remove = move_content
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
+                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
+                        solution_changed = True
+                        break
+                elif move_type == "remove":
+                    idx_to_remove = move_content
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=True)
+                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
+                        solution_changed = True
+                        break
+
+            current_iteration_time = time.time() - current_iteration_time
+            time_per_iteration.append(current_iteration_time)
+            if solution_changed: # If improvement is found, update solution
+                self.accept_move(move_type, move_content, candidate_objective, add_within_cluster, add_for_other_clusters)
+                iteration += 1
+            else:
+                break
+
+            if iteration % logging_frequency == 0 and logging:
+                print(f"Iteration {iteration}: Objective = {self.objective:.14f}", flush=True)
+                print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
+
+        return time_per_iteration, objectives
 """
 Here we define helper functions that can be used by the multiprocessing version of the local search.
 The key characteristic of these functions is that they do not rely on an explicit instance of the
