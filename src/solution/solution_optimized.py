@@ -879,7 +879,6 @@ class Solution:
                 candidate_objective += cur_closest_distance - self.closest_distances_intra[idx]
                 add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
         
-        
         return candidate_objective, add_within_cluster, add_for_other_clusters
 
     def accept_remove(self, idx_to_remove: int, candidate_objective: float, add_within_cluster: list, add_for_other_clusters: list):
@@ -2140,14 +2139,12 @@ class SolutionAverage(Solution):
                 new_sum = old_sum 
                 new_num_pairs = old_num_pairs
 
-                # Batching
                 similarities = [
                     1 - get_distance(idx, idx_to_add, self.distances, self.num_points)
                     for idx in self.selection_per_cluster[other_cluster]
                 ]
                 new_sum += sum(similarities)
                 new_num_pairs += len(similarities)
-        
                 candidate_objective += (new_sum/new_num_pairs) - (old_sum/old_num_pairs) #change in objective
                 add_for_other_clusters.append((other_cluster, new_sum))
                 
@@ -2328,7 +2325,117 @@ class SolutionAverage(Solution):
         # Update objective value
         self.objective = candidate_objective
 
-    
+    def evaluate_remove(self, idx_to_remove: int, local_search: bool = False):
+        """
+        Evaluates the effect of removing a selected point from the solution.
+
+        Parameters:
+        -----------
+        idx_to_remove: int
+            The index of the point to be removed.
+        local_search: bool
+            If True, the method will return (np.inf, None, None) if the candidate objective
+            is worse than the current objective, allowing for local search to skip unnecessary evaluations.
+            If False, it will always evaluate the addition.
+        
+        Returns:
+        --------
+        candidate_objective: float
+            The objective value of the solution after the addition.
+        add_within_cluster: list of tuples
+            The changes to be made within the cluster of the added point.
+            Structure: [(index_to_change, new_closest_point, new_distance)]
+        add_for_other_clusters: list of tuples
+            The changes to be made for other clusters.
+            Structure: [(index_other_cluster, closest_point_pair, new_distance)]
+        """
+        if not self.feasible:
+            raise ValueError("The solution is infeasible, cannot evaluate removal.")
+        if not self.selection[idx_to_remove]:
+            raise ValueError("The point to remove must be selected.")
+        cluster = self.clusters[idx_to_remove]
+        candidate_objective = self.objective - self.cost_per_cluster[cluster]
+
+        # Generate pool of alternative points to compare to
+        new_selection = set(self.selection_per_cluster[cluster])
+        new_selection.remove(idx_to_remove)
+        new_nonselection = set(self.nonselection_per_cluster[cluster])
+        new_nonselection.add(idx_to_remove)
+
+        # Calculate inter cluster distances for all other clusters
+        add_for_other_clusters = [] 
+        for other_cluster in self.unique_clusters:
+            if other_cluster != cluster:
+                old_sum = get_distance(cluster, other_cluster, self.sum_distances_inter, self.num_clusters)
+                old_num_pairs = len(self.selection_per_cluster[other_cluster]) * len(self.selection_per_cluster[cluster])
+                new_sum = old_sum 
+                new_num_pairs = old_num_pairs
+
+                similarities = [
+                    1.0 - get_distance(idx, idx_to_remove, self.distances, self.num_points)
+                    for idx in self.selection_per_cluster[other_cluster]
+                ]
+                new_sum -= sum(similarities)
+                new_num_pairs -= len(similarities)
+                candidate_objective += (new_sum/new_num_pairs) - (old_sum/old_num_pairs) #change in objective
+                add_for_other_clusters.append((other_cluster, new_sum))
+
+        # NOTE: Intra-cluster distances can only increase when removing a point, so when doing local search we can exit here if objective is worse
+        if candidate_objective > self.objective and np.abs(self.objective - candidate_objective) > PRECISION_THRESHOLD and local_search:
+            return np.inf, None, None
+
+        # Calculate intra cluster distances for cluster of removed point
+        #   - Check if removed point was closest selected point for any of the unselected points -> if so, replace with new point
+        add_within_cluster = []
+        for idx in new_nonselection:
+            cur_closest_distance = self.closest_distances_intra[idx]
+            cur_closest_point = self.closest_points_intra[idx]
+            if cur_closest_point == idx_to_remove:
+                cur_closest_distance = np.inf
+                for other_idx in new_selection:
+                    if other_idx != idx:
+                        cur_dist = get_distance(idx, other_idx, self.distances, self.num_points)
+                        if cur_dist < cur_closest_distance:
+                            cur_closest_distance = cur_dist
+                            cur_closest_point = other_idx
+                candidate_objective += cur_closest_distance - self.closest_distances_intra[idx]
+                add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
+        
+        return candidate_objective, add_within_cluster, add_for_other_clusters
+
+    def accept_remove(self, idx_to_remove: int, candidate_objective: float, add_within_cluster: list, add_for_other_clusters: list):
+        """
+        Accepts the addition of a point to the solution.
+        NOTE: this assumes that the initial solution
+        was feasible.
+
+        PARAMETERS:
+        -----------
+        idx_to_remove: int
+            The index of the point to be removed.
+        candidate_objective: float
+            The objective value of the solution after the removal.
+        add_within_cluster: list of tuples
+            The changes to be made within the cluster of the removed point.
+            Structure: [(index_to_change, new_closest_point, new_distance)]
+        add_for_other_clusters: list of tuples
+            The changes to be made for other clusters.
+            Structure: [(index_other_cluster, closest_point_pair, new_distance)]
+        """
+        cluster = self.clusters[idx_to_remove]
+        # Update selected points
+        self.selection[idx_to_remove] = False
+        self.selection_per_cluster[cluster].remove(idx_to_remove)
+        self.nonselection_per_cluster[cluster].add(idx_to_remove)
+        # Update intra cluster distances (add_within_cluster)
+        for idx, new_closest_point, dist in add_within_cluster:
+            self.closest_distances_intra[idx] = dist
+            self.closest_points_intra[idx] = new_closest_point
+        # Update inter cluster distances (add_for_other_clusters)
+        for other_cluster, new_sum in add_for_other_clusters:
+            self.sum_distances_inter[get_index(cluster, other_cluster, self.num_clusters)] = new_sum
+        # Update objective value
+        self.objective = candidate_objective
 
 """
 Here we define helper functions that can be used by the multiprocessing version of the local search.
@@ -2572,6 +2679,8 @@ def evaluate_swap_mp_avg(
     process!
     NOTE: in the current implementation, there is no check for feasibility, so it is assumed
     that the swap can be performed without violating any constraints!
+    NOTE: this version is specifically intended for solution objects that
+    use the "average" costs for inter-cluster distances!
     
     Parameters:
     -----------
@@ -2706,6 +2815,86 @@ def evaluate_remove_mp(
                 candidate_objective += cur_closest_similarity - _closest_distances_inter[cluster, other_cluster]
                 add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
     
+    if candidate_objective > objective and np.abs(candidate_objective - objective) > PRECISION_THRESHOLD:
+        return -1, -1, -1
+    
+    # Calculate intra cluster distances for cluster of removed point
+    add_within_cluster = [] #this stores changes that have to be made if the objective improves
+    for idx in new_nonselection:
+        cur_closest_distance = _closest_distances_intra[idx]
+        cur_closest_point = _closest_points_intra[idx]
+        if cur_closest_point == idx_to_remove:
+            cur_closest_distance = np.inf
+            for other_idx in new_selection:
+                cur_dist = get_distance(idx, other_idx, _distances, _num_points)
+                if cur_dist < cur_closest_distance:
+                    cur_closest_distance = cur_dist
+                    cur_closest_point = other_idx
+            candidate_objective += cur_closest_distance - _closest_distances_intra[idx]
+            add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
+
+    if candidate_objective < objective and np.abs(candidate_objective - objective) > PRECISION_THRESHOLD:
+        return candidate_objective, add_within_cluster, add_for_other_clusters
+    else:
+        return -1, -1, -1
+
+def evaluate_remove_mp_avg(
+        idx_to_remove: int, objective: float,
+        selection_per_cluster: dict, nonselection: set,
+        ):
+    """
+    Evaluates the effect of removing a selected point from the solution.
+    NOTE: this function relies on shared memory, as well as existing variables that
+    have to be initialized (those starting with an underscore) when spawning a worker
+    process!
+    NOTE: in the current implementation, there is no check for feasibility, so it is assumed
+    that the swap can be performed without violating any constraints!
+    NOTE: this version is specifically intended for solution objects that
+    use the "average" costs for inter-cluster distances!
+
+    Parameters:
+    -----------
+    idx_to_remove: int
+        The index of the point to be removed.
+    objective: float
+        The current objective value of the solution.
+    selection_per_cluster: dict
+        A dictionary mapping cluster indices to sets of selected point indices in that cluster.
+    nonselection: set
+        A set of indices of points (in the cluster of the point to be removed) that are currently 
+        not selected in the solution.
+    """
+    cluster = _clusters[idx_to_remove]
+    candidate_objective = objective - _cost_per_cluster[cluster] # cost for removing the point from the cluster
+
+    # Generate pool of alternative points to compare to
+    new_selection = set(selection_per_cluster[cluster])
+    new_selection.remove(idx_to_remove)
+    new_nonselection = set(nonselection)
+    new_nonselection.add(idx_to_remove)
+
+    """
+    Unlike other evaluate functions, we start by checking the inter-cluster distances first since
+    removing a point can only decrease the inter-cluster cost.
+    """
+    add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
+    for other_cluster in _unique_clusters:
+        if other_cluster != cluster:
+            old_sum = get_distance(cluster, other_cluster, _sum_distances_inter, _num_clusters)
+            old_num_pairs = len(selection_per_cluster[other_cluster]) * len(selection_per_cluster[cluster])
+            new_sum = old_sum 
+            new_num_pairs = old_num_pairs
+
+            similarities = [
+                1.0 - get_distance(idx, idx_to_remove, _distances, _num_points)
+                for idx in selection_per_cluster[other_cluster]
+            ]
+            new_sum -= sum(similarities)
+            new_num_pairs -= len(similarities)
+            candidate_objective += (new_sum/new_num_pairs) - (old_sum/old_num_pairs)
+            add_for_other_clusters.append((other_cluster, new_sum))
+    
+    # NOTE: Intra-cluster distance can only increase when removing a point, so when doing local search we can exit here if objective is worse
     if candidate_objective > objective and np.abs(candidate_objective - objective) > PRECISION_THRESHOLD:
         return -1, -1, -1
     
