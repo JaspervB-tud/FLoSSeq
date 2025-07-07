@@ -1949,7 +1949,7 @@ class SolutionAverage(Solution):
     as the average of similarities between cluster representatives of different clusters.
     This is an experimental version and may not be suitable for all use cases.
     """
-    def __init__(self, distances: np.ndarray, clusters: np.ndarray, selection=None, selection_cost: float = 1.0, cost_per_cluster: int = 0, seed=None):
+    def __init__(self, distances: np.ndarray, clusters: np.ndarray, selection=None, selection_cost: float = 1.0, cost_per_cluster: int = 0, softmax_beta: float = 0.0, seed=None):
         # Assert that distances and clusters have the same number of rows
         if distances.shape[0] != clusters.shape[0]:
             raise ValueError("Number of points is different between distances and clusters.")
@@ -2013,6 +2013,14 @@ class SolutionAverage(Solution):
         # Process initial representation to optimize for comparisons speed
         self.points_per_cluster = {cluster: set(np.where(self.clusters == cluster)[0]) for cluster in self.unique_clusters} #points in every cluster
 
+        # Determine logsum factor by calculating max similarity between points of different labels
+        # NOTE: This is slow as of now, but can potentially be sped up in the future
+        self.beta = softmax_beta
+        self.logsum_factor = -np.inf
+        for i in range(self.clusters.shape[0]):
+            for j in range(i):
+                if self.clusters[i] != self.clusters[j]:
+                    self.logsum_factor = max(self.logsum_factor, self.beta*(1.0 - get_distance(i, j, self.distances, self.num_points)))
         self.calculate_objective()
 
     def calculate_objective(self):
@@ -2031,7 +2039,16 @@ class SolutionAverage(Solution):
         self.closest_distances_intra = np.zeros(self.selection.shape[0], dtype=AUXILIARY_DISTANCE_DTYPE) #distances to closest selected point
         self.closest_points_intra = np.arange(0, self.selection.shape[0], dtype=np.int32) #indices of closest selected point
         # INTER CLUSTER INFORMATION
-        self.sum_distances_inter = np.zeros(int(self.unique_clusters.shape[0] * (self.unique_clusters.shape[0] - 1) / 2), dtype=AUXILIARY_DISTANCE_DTYPE)
+        """
+        Arrays below are used for determining 'average' similarity between selected points of cluster labels as follows:
+        avg_sim = ( ∑s(x,y) ⋅ exp{β⋅s(x,y)} ) / ( ∑exp{β⋅s(x,y)} )
+        NOTE: we use log-sum-exp trick by taking m := max( β⋅s(x,y) ∀(x,y) ) and 'subtracting' this from the exponents
+        (i.e. dividing by exp{m} for both the numerator and denominator) in order to maintain numerical stability.
+        NOTE: when β=0 this is equivalent to calculating the mean over all similarities and thus it is checked
+        whether or not β is equal to 0.
+        """
+        self.distances_inter_numerator = np.zeros(int(self.unique_clusters.shape[0] * (self.unique_clusters.shape[0] - 1) / 2), dtype=AUXILIARY_DISTANCE_DTYPE)
+        self.distances_inter_denominator = np.zeros(int(self.unique_clusters.shape[0] * (self.unique_clusters.shape[0] - 1) / 2), dtype=AUXILIARY_DISTANCE_DTYPE)
 
         is_feasible = self.determine_feasibility()
         if not is_feasible:
@@ -2068,21 +2085,134 @@ class SolutionAverage(Solution):
                 objective_components["intra-cluster"] += cur_min
         # Inter cluster distance costs
         for cluster_1, cluster_2 in itertools.combinations(self.unique_clusters, 2):
-            cur_inter_cost = 0.0
-            tot_pairs = 0
-            for point_1 in sorted(list(self.selection_per_cluster[cluster_1])): #this is to ensure consistent ordering
-                for point_2 in sorted(list(self.selection_per_cluster[cluster_2])): #this is to ensure consistent ordering
-                    cur_inter_cost += 1.0 - get_distance(point_1, point_2, self.distances, self.num_points)
-                    tot_pairs += 1
-            self.sum_distances_inter[get_index(cluster_1, cluster_2, self.num_clusters)] = AUXILIARY_DISTANCE_DTYPE(cur_inter_cost)
-            objective += cur_inter_cost/tot_pairs
-            objective_components["inter-cluster"] += cur_inter_cost/tot_pairs
-
+            cur_numerator = 0.0
+            cur_denominator = 0.0
+            for point_1, point_2 in itertools.product(self.selection_per_cluster[cluster_1], self.selection_per_cluster[cluster_2]):
+                cur_similarity = 1.0 - get_distance(point_1, point_2, self.distances, self.num_points)
+                cur_numerator += cur_similarity * math.exp(cur_similarity * self.beta - self.logsum_factor)
+                cur_denominator += math.exp(cur_similarity * self.beta - self.logsum_factor)
+            self.distances_inter_numerator[get_index(cluster_1, cluster_2, self.num_clusters)] = AUXILIARY_DISTANCE_DTYPE(cur_numerator)
+            self.distances_inter_denominator[get_index(cluster_1, cluster_2, self.num_clusters)] = AUXILIARY_DISTANCE_DTYPE(cur_denominator)
+            objective += cur_numerator/cur_denominator
+            objective_components["inter-cluster"] += cur_numerator/cur_denominator
 
         self.objective = objective
         self.objective_components = objective_components
 
         return objective
+
+    @classmethod
+    def generate_centroid_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, softmax_beta: float = 0.0, seed=None):
+        """
+        Generates a Solution object with an initial solution by selecting the centroid for every cluster.
+
+        Parameters:
+        -----------
+        distances: numpy.ndarray
+            A 2D array where distances[i, j] represents the distance (similarity) between point i and point j.
+            NOTE: distances should be in the range [0, 1].
+        clusters: numpy.ndarray
+            A 1D array where clusters[i] represents the cluster assignment of point i.
+        selection_cost: float
+            The cost associated with selecting a point.
+        cost_per_cluster: int
+            Defines how the cost of selecting a point in each cluster is calculated.
+            0: Default behavior, set to selection cost.
+            1: Set to selection_cost / number of points in cluster.
+            2: Set to the average distance in a cluster (average distance of all points in the cluster to the centroid of the cluster).
+            3: Set to the average distance in a cluster (average distance of all points in the cluster to the closest point in the cluster).
+        seed: int, optional
+            Random seed for reproducibility.
+            NOTE: The seed will create a random state for the solution, which is used for
+            operations that introduce stochasticity, such as random selection of points.
+
+        Returns:
+        --------
+        Solution
+            A solution object initialized with centroids for every cluster.
+        """
+        # Assert that distances and clusters have the same number of rows
+        if distances.shape[0] != clusters.shape[0]:
+            raise ValueError("Number of points is different between distances and clusters.")
+        # Assert that distances are in [0,1] (i.e. distances are similarities or dissimilarities)
+        if not np.all((distances >= 0) & (distances <= 1)):
+            raise ValueError("Distances must be in the range [0, 1].")
+        
+        unique_clusters = np.unique(clusters)
+        selection = np.zeros(clusters.shape[0], dtype=bool)
+
+        for cluster in unique_clusters:
+            cluster_points = np.where(clusters == cluster)[0]
+            cluster_distances = distances[np.ix_(cluster_points, cluster_points)]
+            centroid = np.argmin(np.sum(cluster_distances, axis=1))
+            selection[cluster_points[centroid]] = True
+
+        return cls(distances, clusters, selection=selection, selection_cost=selection_cost, cost_per_cluster=cost_per_cluster, softmax_beta=softmax_beta, seed=seed)
+    
+    @classmethod
+    def generate_random_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, max_fraction=0.1, softmax_beta: float = 0.0, seed=None):
+        """
+        Generates a Solution object with an initial solution by randomly selecting points.
+
+        Parameters:
+        -----------
+        distances: numpy.ndarray
+            A 2D array where distances[i, j] represents the distance (similarity) between point i and point j.
+            NOTE: distances should be in the range [0, 1].
+        clusters: numpy.ndarray
+            A 1D array where clusters[i] represents the cluster assignment of point i.
+        selection_cost: float
+            The cost associated with selecting a point.
+        cost_per_cluster: int
+            Defines how the cost of selecting a point in each cluster is calculated.
+            0: Default behavior, set to selection cost.
+            1: Set to selection_cost / number of points in cluster.
+            2: Set to the average distance in a cluster (average distance of all points in the cluster to the centroid of the cluster).
+            3: Set to the average distance in a cluster (average distance of all points in the cluster to the closest point in the cluster).
+        max_fraction: float
+            The maximum fraction of points to select (0-1].
+            NOTE: If smaller than 1 divided by the number of clusters,
+            at least one point per cluster will be selected.
+        seed: int, optional
+            Random seed for reproducibility.
+            NOTE: The seed will create a random state for the solution which is used for
+            operations that introduce stochasticity, such as random selection of points.
+
+        Returns:
+        --------
+        Solution
+            A randomly initialized solution object.
+        """
+        if distances.shape[0] != clusters.shape[0]:
+            raise ValueError("Number of points is different between distances and clusters.")
+        if not np.all((distances >= 0) & (distances <= 1)):
+            raise ValueError("Distances must be in the range [0, 1].")
+        if not (0 < max_fraction <= 1):
+            raise ValueError("max_fraction must be between 0 (exclusive) and 1 (inclusive).")
+
+        unique_clusters = np.unique(clusters)
+        selection = np.zeros(clusters.shape[0], dtype=bool)
+
+        if isinstance(seed, int):
+            random_state = np.random.RandomState(seed)
+        else:
+            random_state = np.random.RandomState()
+
+        # Ensure at least one point per cluster is selected
+        for cluster in unique_clusters:
+            cluster_points = np.where(clusters == cluster)[0]
+            selected_point = random_state.choice(cluster_points)
+            selection[selected_point] = True
+
+        # Randomly select additional points up to the max_fraction limit
+        num_points = clusters.shape[0]
+        max_selected_points = int(max_fraction * num_points)
+        remaining_points = np.where(~selection)[0]
+        num_additional_points = max(0, max_selected_points - np.sum(selection))
+        additional_points = random_state.choice(remaining_points, size=num_additional_points, replace=False)
+        selection[additional_points] = True
+
+        return cls(distances, clusters, selection, selection_cost=selection_cost, cost_per_cluster=cost_per_cluster, softmax_beta=softmax_beta, seed=random_state)
 
     def evaluate_add(self, idx_to_add: int, local_search=False):
         """
