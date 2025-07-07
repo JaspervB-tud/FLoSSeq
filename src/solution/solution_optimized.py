@@ -3126,20 +3126,16 @@ def evaluate_add_mp_avg(
         
         for other_cluster in _unique_clusters:
             if other_cluster != cluster:
-                old_sum = get_distance(cluster, other_cluster, _sum_distances_inter, _num_clusters)
-                old_num_pairs = len(selection_per_cluster[other_cluster]) * len(selection_per_cluster[cluster])
-                new_sum = old_sum 
-                new_num_pairs = old_num_pairs
-
-                similarities = [
-                    1 - get_distance(idx, idx_to_add, _distances, _num_points)
-                    for idx in selection_per_cluster[other_cluster]
-                ]
-                new_sum += sum(similarities)
-                new_num_pairs += len(similarities)
-
-                candidate_objective += (new_sum/new_num_pairs) - (old_sum/old_num_pairs)
-                add_for_other_clusters.append((other_cluster, new_sum))
+                old_numerator = get_distance(cluster, other_cluster, _distances_inter_numerator, _num_clusters)
+                old_denominator = get_distance(cluster, other_cluster, _distances_inter_denominator, _num_clusters)
+                new_numerator = old_numerator
+                new_denominator = old_denominator
+                for idx in selection_per_cluster[other_cluster]:
+                    cur_similarity = 1.0 - get_distance(idx, idx_to_add, _distances, _num_points)
+                    new_numerator += cur_similarity * math.exp(cur_similarity * _beta - _logsum_factor)
+                    new_denominator += math.exp(cur_similarity * _beta - _logsum_factor)
+                candidate_objective += (new_numerator/new_denominator) - (old_numerator/old_denominator)
+                add_for_other_clusters.append((other_cluster, new_numerator, new_denominator))
 
         if candidate_objective < objective and np.abs(candidate_objective - objective) > PRECISION_THRESHOLD:
             return candidate_objective, add_within_cluster, add_for_other_clusters
@@ -3587,8 +3583,9 @@ def init_worker_avg(
         clusters_name, clusters_shape,
         closest_distances_intra_name, closest_distances_intra_shape, 
         closest_points_intra_name, closest_points_intra_shape,
-        sum_distances_inter_name, sum_distances_inter_shape,
-        unique_clusters, cost_per_cluster, num_points, num_clusters):
+        distances_inter_numerator_name, distances_inter_numerator_shape,
+        distances_inter_denominator_name, distances_inter_denominator_shape,
+        unique_clusters, cost_per_cluster, num_points, num_clusters, beta, logsum_factor):
     """
     Initializes a worker for multiprocessing by setting up shared memory
     for the distances, clusters, closest distances and points.
@@ -3613,10 +3610,14 @@ def init_worker_avg(
         Name of the shared memory segment for intra-cluster closest points.
     closest_points_intra_shape: tuple
         Shape of the intra-cluster closest points array.
-    sum_distances_inter_name: str
-        Name of the shared memory segment for inter-cluster sum distances.
-    sum_distances_inter_shape: tuple
-        Shape of the inter-cluster sum distances array.
+    distances_inter_numerator_name: str
+        Name of the shared memory segment for inter-cluster distances numerator.
+    distances_inter_numerator_shape: tuple
+        Shape of the inter-cluster distances numerator array.
+    distances_inter_denominator_name: str
+        Name of the shared memory segment for inter-cluster distances denominator.
+    distances_inter_denominator_shape: tuple
+        Shape of the inter-cluster distances denominator array.
     unique_clusters: np.ndarray
         Array of unique cluster indices.
     cost_per_cluster: np.ndarray
@@ -3626,6 +3627,10 @@ def init_worker_avg(
         Total number of points in the dataset.
     num_clusters: int
         Total number of clusters in the dataset.
+    beta: float
+        Beta parameter for the average inter-cluster distance calculation.
+    logsum_factor: float
+        Logarithmic factor for the average inter-cluster distance calculation.
     """
     import numpy as np
     import multiprocessing.shared_memory as shm
@@ -3643,14 +3648,19 @@ def init_worker_avg(
     global _closest_points_intra_shm, _closest_points_intra
     _closest_points_intra_shm = shm.SharedMemory(name=closest_points_intra_name)
     _closest_points_intra = np.ndarray(closest_points_intra_shape, dtype=np.int32, buffer=_closest_points_intra_shm.buf)
-    global _sum_distances_inter_shm, _sum_distances_inter
-    _sum_distances_inter_shm = shm.SharedMemory(name=sum_distances_inter_name)
-    _sum_distances_inter = np.ndarray(sum_distances_inter_shape, dtype=DISTANCE_DTYPE, buffer=_sum_distances_inter_shm.buf)
-    global _unique_clusters, _cost_per_cluster, _num_points, _num_clusters
+    global _distances_inter_numerator_shm, _distances_inter_numerator
+    _distances_inter_numerator_shm = shm.SharedMemory(name=distances_inter_numerator_name)
+    _distances_inter_numerator = np.ndarray(distances_inter_numerator_shape, dtype=DISTANCE_DTYPE, buffer=_distances_inter_numerator_shm.buf)
+    global _distances_inter_denominator_shm, _distances_inter_denominator
+    _distances_inter_denominator_shm = shm.SharedMemory(name=distances_inter_denominator_name)
+    _distances_inter_denominator = np.ndarray(distances_inter_denominator_shape, dtype=DISTANCE_DTYPE, buffer=_distances_inter_denominator_shm.buf)
+    global _unique_clusters, _cost_per_cluster, _num_points, _num_clusters, _beta, _logsum_factor
     _unique_clusters = unique_clusters
     _cost_per_cluster = cost_per_cluster
     _num_points = num_points
     _num_clusters = num_clusters
+    _beta = beta
+    _logsum_factor = logsum_factor
 
     # Define clean up function to close shared memory
     def cleanup():
@@ -3659,7 +3669,8 @@ def init_worker_avg(
             _clusters_shm.close()
             _closest_distances_intra_shm.close()
             _closest_points_intra_shm.close()
-            _sum_distances_inter_shm.close()
+            _distances_inter_numerator_shm.close()
+            _distances_inter_denominator_shm.close()
         except Exception as e:
             print(f"Error closing shared memory: {e}")
 
