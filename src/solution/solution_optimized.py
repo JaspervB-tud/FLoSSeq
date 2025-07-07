@@ -2830,11 +2830,13 @@ class SolutionAverage(Solution):
             # Copy closest_points_intra to shared memory
             closest_points_intra_shm = shm.SharedMemory(create=True, size=self.closest_points_intra.nbytes)
             shared_closest_points_intra = np.ndarray(self.closest_points_intra.shape, dtype=self.closest_points_intra.dtype, buffer=closest_points_intra_shm.buf)
-
-            # Copy sum_distances_inter to shared memory
-            sum_distances_inter_shm = shm.SharedMemory(create=True, size=self.sum_distances_inter.nbytes)
-            shared_sum_distances_inter = np.ndarray(self.sum_distances_inter.shape, dtype=self.sum_distances_inter.dtype, buffer=sum_distances_inter_shm.buf)
-
+            # Copy distances_inter_numerator to shared memory
+            distances_inter_numerator_shm = shm.SharedMemory(create=True, size=self.distances_inter_numerator.nbytes)
+            shared_distances_inter_numerator = np.ndarray(self.distances_inter_numerator.shape, dtype=self.distances_inter_numerator.dtype, buffer=distances_inter_numerator_shm.buf)
+            # Copy distances_inter_denominator to shared memory
+            distances_inter_denominator_shm = shm.SharedMemory(create=True, size=self.distances_inter_denominator.nbytes)
+            shared_distances_inter_denominator = np.ndarray(self.distances_inter_denominator.shape, dtype=self.distances_inter_denominator.dtype, buffer=distances_inter_denominator_shm.buf)
+            
             with Manager() as manager:
                 event = manager.Event() #this is used to signal when tasks should be stopped
                 results = manager.list() #this is used to store an improvement is one is found
@@ -2847,8 +2849,9 @@ class SolutionAverage(Solution):
                         clusters_shm.name, shared_clusters.shape,
                         closest_distances_intra_shm.name, shared_closest_distances_intra.shape,
                         closest_points_intra_shm.name, shared_closest_points_intra.shape,
-                        sum_distances_inter_shm.name, shared_sum_distances_inter.shape,
-                        self.unique_clusters, self.cost_per_cluster, self.num_points, self.num_clusters
+                        distances_inter_numerator_shm.name, shared_distances_inter_numerator.shape,
+                        distances_inter_denominator_shm.name, shared_distances_inter_denominator.shape,
+                        self.unique_clusters, self.cost_per_cluster, self.num_points, self.num_clusters, self.beta, self.logsum_factor,
                     ),
                 ) as pool:
                     while iteration < max_iterations:
@@ -2894,7 +2897,8 @@ class SolutionAverage(Solution):
                             # Start by updating shared memory arrays
                             np.copyto(shared_closest_distances_intra, self.closest_distances_intra)
                             np.copyto(shared_closest_points_intra, self.closest_points_intra)
-                            np.copyto(shared_sum_distances_inter, self.sum_distances_inter)
+                            np.copyto(shared_distances_inter_numerator, self.distances_inter_numerator)
+                            np.copyto(shared_distances_inter_denominator, self.distances_inter_denominator)
                             
                             event.clear() #reset event for current iteration
                             results = [] #resets results for current iteration
@@ -3005,12 +3009,18 @@ class SolutionAverage(Solution):
                     closest_points_intra_shm.unlink()
                 except FileNotFoundError:
                     print("Shared memory for closest points intra already unlinked, exiting as normal.", flush=True)
-            if sum_distances_inter_shm:
+            if distances_inter_numerator_shm:
                 try:
-                    sum_distances_inter_shm.close()
-                    sum_distances_inter_shm.unlink()
+                    distances_inter_numerator_shm.close()
+                    distances_inter_numerator_shm.unlink()
                 except FileNotFoundError:
-                    print("Shared memory for sum distances inter already unlinked, exiting as normal.", flush=True)
+                    print("Shared memory for distances inter numerator already unlinked, exiting as normal.", flush=True)
+            if distances_inter_denominator_shm:
+                try:
+                    distances_inter_denominator_shm.close()
+                    distances_inter_denominator_shm.unlink()
+                except FileNotFoundError:
+                    print("Shared memory for distances inter denominator already unlinked, exiting as normal.", flush=True)
 
         return time_per_iteration, objectives
                                 
