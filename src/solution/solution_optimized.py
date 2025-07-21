@@ -960,12 +960,586 @@ class Solution:
             idx_to_remove = move_content
             self.accept_remove(idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
 
-    def local_search(self, max_iterations: int = 10_000, num_cores: int = 1, hybrid: bool = True,
-                           random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
-                           batch_size: int = 1000, max_batches: int = 32, 
-                           runtime_switch: float = 1.0, num_switch: int = 5,
-                           logging: bool = False, logging_frequency: int = 500,
-                           ):
+    def local_search_sp(self,
+                        max_iterations: int = 10_000, max_runtime: float = np.inf,
+                        random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
+                        dynamically_check: bool = False, max_move_queue_size: int = 1000, min_doubleswaps: int = 1, start_p: float = 0.25, decay_rate: float = 0.01,
+                        logging: bool = False, logging_frequency: int = 500,
+                        ):
+        """
+        Perform local search to find a (local) optimal solution using a single processor. 
+        
+        Parameters:
+        -----------
+        max_iterations: int
+            The maximum number of iterations to perform.
+        max_runtime: float
+            The maximum runtime in seconds for the local search.
+        random_move_order: bool
+            If True, the order of moves (add, swap, doubleswap,
+            remove) is randomized.
+        random_index_order: bool
+            If True, the order of indices for moves is randomized.
+            NOTE: if random_move_order is True, but this is false,
+            all moves of a particular type will be tried before
+            moving to the next move type, but the order of moves
+            is random).
+        move_order: list
+            If provided, this list will be used to determine the
+            order of moves. If random_move_order is True, this
+            list will be shuffled before use.
+            NOTE: this list should contain the following move types (as strings):
+                - "add"
+                - "swap"
+                - "doubleswap"
+                - "remove"
+            NOTE: by leaving out a move type, it will not be
+            considered in the local search.
+        dynamically_check: bool
+            If True, doubleswaps will be dynamically checked based on the recent moves,
+            and will be omitted if not performed frequently enough.
+            NOTE: If set to false, doubleswaps will always be checked
+            and all moves are assigned equal probability.
+        max_move_queue_size: int
+            The maximum number of moves to keep track of in the recent moves queue.
+        min_doubleswaps: int
+            The minimum number of doubleswaps in the last max_move_queue_size moves
+            before doubleswaps are omitted.
+        start_p: float
+            The starting probability for testing a doubleswap move.
+            NOTE: This probability should be larger than 1/4 to ensure that
+            doubleswaps are tested enough to conclude that they can be
+            omitted.
+        decay_rate: float
+            The rate at which the probability for testing a doubleswap move decays.
+            NOTE: This should be a small positive number, e.g. 0.01.
+        logging: bool
+            If True, information about the local search will be printed.
+        logging_frequency: int
+            If logging is True, information will be printed every
+            logging_frequency iterations.
+
+        Returns:
+        --------
+        time_per_iteration: list of floats
+            The time taken for each iteration.
+            NOTE: this is primarily for logging purposes
+        objectives: list of floats
+            The objective value after each iteration.
+        """
+        # Validate input parameters
+        if not isinstance(max_iterations, int) or max_iterations < 1:
+            raise ValueError("max_iterations must be a positive integer.")
+        if not isinstance(random_move_order, bool):
+            raise ValueError("random_move_order must be a boolean value.")
+        if not isinstance(random_index_order, bool):
+            raise ValueError("random_index_order must be a boolean value.")
+        if not isinstance(move_order, list):
+            raise ValueError("move_order must be a list of move types.")
+        else:
+            if len(move_order) == 0:
+                raise ValueError("move_order must contain at least one move type.")
+            valid_moves = {"add", "swap", "doubleswap", "remove"}
+            if len(set(move_order) - valid_moves) > 0:
+                raise ValueError("move_order must contain only the following move types: add, swap, doubleswap, remove.")
+        if not isinstance(dynamically_check, bool):
+            raise ValueError("dynamically_check must be a boolean value.")
+        if not isinstance(max_move_queue_size, int) or max_move_queue_size < 1:
+            raise ValueError("max_move_queue_size must be a positive integer.")
+        if not isinstance(min_doubleswaps, int) or min_doubleswaps < 0:
+            raise ValueError("min_doubleswaps must be a non-negative integer.")
+        if not isinstance(start_p, float) or not (0 < start_p <= 1):
+            raise ValueError("start_p must be a float between 0 (exclusive) and 1 (inclusive).")
+        if not isinstance(decay_rate, float) or decay_rate < 0:
+            raise ValueError("decay_rate must be a non-negative float.")
+        if not isinstance(logging, bool):
+            raise ValueError("logging must be a boolean value.")
+        if not isinstance(logging_frequency, int) or logging_frequency < 1:
+            raise ValueError("logging_frequency must be a positive integer.")  
+        if not self.feasible:
+            raise ValueError("The solution is infeasible, cannot perform local search.")
+        
+        # Initialize variables for tracking the local search progress
+        iteration = 0
+        time_per_iteration = []
+        objectives = []
+        solution_changed = False
+        # Initialize variables for dynamically checking doubleswaps
+        if dynamically_check:
+            recent_moves = deque(maxlen=max_move_queue_size)
+            check_doubleswap = True
+        else:
+            check_doubleswap = False
+
+        start_time = time.time()
+        while iteration < max_iterations:
+            current_iteration_time = time.time()
+            objectives.append(self.objective)
+            solution_changed = False
+            if dynamically_check:
+                move_generator = self.generate_moves_biased(
+                    iteration=iteration,
+                    random_move_order=random_move_order,
+                    random_index_order=random_index_order,
+                    order=move_order,
+                    decay_rate=decay_rate,
+                    start_p=start_p
+                )
+            else:
+                move_generator = self.generate_moves(
+                    random_move_order=random_move_order,
+                    random_index_order=random_index_order,
+                    order=move_order
+                )
+            
+            move_counter = 0
+            for move_type, move_content in move_generator:
+                move_counter += 1
+                if move_type == "add":
+                    idx_to_add = move_content
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=True)
+                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
+                        solution_changed = True
+                        break
+                elif move_type == "swap" or move_type == "doubleswap":
+                    idxs_to_add, idx_to_remove = move_content
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
+                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
+                        solution_changed = True
+                        break
+                elif move_type == "remove":
+                    idx_to_remove = move_content
+                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=True)
+                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
+                        solution_changed = True
+                        break
+
+                if move_counter % 1_000 == 0:
+                    if time.time() - start_time > max_runtime:
+                        if logging:
+                            print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                        return time_per_iteration, objectives
+
+            time_per_iteration.append(time.time() - current_iteration_time)
+            if solution_changed: # If improvement is found, update solution
+                self.accept_move(move_type, move_content, candidate_objective, add_within_cluster, add_for_other_clusters)
+                iteration += 1
+                # Check if time exceeds allowed runtime
+                if time.time() - start_time > max_runtime:
+                    if logging:
+                        print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                    return time_per_iteration, objectives
+                # Check if doubleswaps should be removed
+                if check_doubleswap and dynamically_check:
+                    recent_moves.append(move_type)
+                    if len(recent_moves) >= max_move_queue_size:
+                        num_doubleswaps = sum(1 for move in recent_moves if move == "doubleswap")
+                        if num_doubleswaps < min_doubleswaps:
+                            check_doubleswap = False
+                            del recent_moves
+                            move_order = [move for move in move_order if move != "doubleswap"]
+                            if logging:
+                                print(f"Disabled doubleswap moves after {iteration} iterations due to insufficient doubleswaps in the last {max_move_queue_size} moves.", flush=True)
+            else:
+                break
+
+            if iteration % logging_frequency == 0 and logging:
+                print(f"Iteration {iteration}: Objective = {self.objective:.10f}", flush=True)
+                print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
+
+        return time_per_iteration, objectives
+
+    def local_search_mp(self, 
+                        max_iterations: int = 10_000, max_runtime: float = np.inf,
+                        num_cores: int = 2,
+                        random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
+                        batch_size: int = 1000, max_batches: int = 32, 
+                        runtime_switch: float = 10.0,
+                        dynamically_check: bool = False, max_move_queue_size: int = 1000, min_doubleswaps: int = 1, start_p: float = 0.25, decay_rate: float = 0.01,
+                        logging: bool = False, logging_frequency: int = 500,
+                        ):
+        """
+        Perform local search to find a (local) optimal solution using an adaptive approach where
+        the search switches between single-core and multi-core execution based on the runtime of iterations.
+
+        Parameters:
+        max_iterations: int
+            The maximum number of iterations to perform.
+        max_runtime: float
+            The maximum runtime in seconds for the local search.
+        num_cores: int
+            The number of cores to use for parallel processing.
+            NOTE: if set to 1, local search will always run in
+            single processor mode, even if hybrid is True.
+        hybrid: bool
+            If True, local search will switch to multiprocessing
+            after num_switch consecutive iterations take longer
+            than runtime_switch seconds.
+        random_move_order: bool
+            If True, the order of moves (add, swap, doubleswap,
+            remove) is randomized.
+        random_index_order: bool
+            If True, the order of indices for moves is randomized.
+            NOTE: if random_move_order is True, but this is false,
+            all moves of a particular type will be tried before
+            moving to the next move type, but the order of moves
+            is random).
+        move_order: list
+            If provided, this list will be used to determine the
+            order of moves. If random_move_order is True, this
+            list will be shuffled before use.
+            NOTE: this list should contain the following move types (as strings):
+                - "add"
+                - "swap"
+                - "doubleswap"
+                - "remove"
+            NOTE: by leaving out a move type, it will not be
+            considered in the local search.
+        batch_size: int
+            In multiprocessing mode, moves are processed in batches
+            of this size.
+            NOTE: do not set this to a value smaller than 0
+        max_batches: int
+            To prevent memory issues, the number of batches is
+            limited to this value. Once every batch has been
+            processed, the next set of batches will be
+            processed.
+            NOTE: this should be set to at least the number of
+            num_cores, otherwise some cores will be idle.
+        runtime_switch: float
+            Threshold in seconds for switching between single-core and multi-core 
+            execution.
+        dynamically_check: bool
+            If True, doubleswaps will be dynamically checked based on the recent moves,
+            and will be omitted if not performed frequently enough.
+            NOTE: If set to false, doubleswaps will always be checked
+            and all moves are assigned equal probability.
+        max_move_queue_size: int
+            The maximum number of moves to keep track of in the recent moves queue.
+        min_doubleswaps: int
+            The minimum number of doubleswaps in the last max_move_queue_size moves
+            before doubleswaps are omitted.
+        start_p: float
+            The starting probability for testing a doubleswap move.
+            NOTE: This probability should be larger than 1/4 to ensure that
+            doubleswaps are test enough to conclude that they can be
+            omitted.
+        decay_rate: float
+            The rate at which the probability for testing a doubleswap move decays.
+            NOTE: This should be a small positive number, e.g. 0.01.
+        logging: bool
+            If True, information about the local search will be printed.
+        logging_frequency: int
+            If logging is True, information will be printed every
+            logging_frequency iterations.
+        
+        Returns:
+        --------
+        time_per_iteration: list of floats
+            The time taken for each iteration.
+            NOTE: this is primarily for logging purposes
+        objectives: list of floats
+            The objective value in each iteration.
+        """
+        # Validate input parameters
+        if not isinstance(max_iterations, int) or max_iterations < 1:
+            raise ValueError("max_iterations must be a positive integer.")
+        if not isinstance(num_cores, int) or num_cores < 2:
+            raise ValueError("num_cores must be a positive integer and larger than 1.")
+        if not isinstance(random_move_order, bool):
+            raise ValueError("random_move_order must be a boolean value.")
+        if not isinstance(random_index_order, bool):
+            raise ValueError("random_index_order must be a boolean value.")
+        if not isinstance(move_order, list):
+            raise ValueError("move_order must be a list of move types.")
+        else:
+            if len(move_order) == 0:
+                raise ValueError("move_order must contain at least one move type.")
+            valid_moves = {"add", "swap", "doubleswap", "remove"}
+            if len(set(move_order) - valid_moves) > 0:
+                raise ValueError("move_order must contain only the following move types: add, swap, doubleswap, remove.")
+        if not isinstance(dynamically_check, bool):
+            raise ValueError("dynamically_check must be a boolean value.")
+        if not isinstance(max_move_queue_size, int) or max_move_queue_size < 1:
+            raise ValueError("max_move_queue_size must be a positive integer.")
+        if not isinstance(min_doubleswaps, int) or min_doubleswaps < 0:
+            raise ValueError("min_doubleswaps must be a non-negative integer.")
+        if not isinstance(start_p, float) or not (0 < start_p <= 1):
+            raise ValueError("start_p must be a float between 0 (exclusive) and 1 (inclusive).")
+        if not isinstance(decay_rate, float) or decay_rate < 0:
+            raise ValueError("decay_rate must be a non-negative float.")
+        if not isinstance(logging, bool):
+            raise ValueError("logging must be a boolean value.")
+        if not isinstance(logging_frequency, int) or logging_frequency < 1:
+            raise ValueError("logging_frequency must be a positive integer.")  
+        if not self.feasible:
+            raise ValueError("The solution is infeasible, cannot perform local search.")
+
+        # Initialize variables for tracking the local search progress
+        iteration = 0
+        time_per_iteration = []
+        objectives = []
+        solution_changed = False
+        # Initialize variables for dynamically checking doubleswaps
+        if dynamically_check:
+            recent_moves = deque(maxlen=max_move_queue_size)
+            check_doubleswap = True
+        else:
+            check_doubleswap = False
+        # Initialize variables for multiprocessing
+        run_in_multiprocessing = False
+
+        # Multiprocessing
+        try:
+            # Copy distance matrix to shared memory
+            distances_shm = shm.SharedMemory(create=True, size=self.distances.nbytes)
+            shared_distances = np.ndarray(self.distances.shape, dtype=self.distances.dtype, buffer=distances_shm.buf)
+            np.copyto(shared_distances, self.distances) #this array is static, only copy once
+            # Copy cluster assignment to shared memory
+            clusters_shm = shm.SharedMemory(create=True, size=self.clusters.nbytes)
+            shared_clusters = np.ndarray(self.clusters.shape, dtype=self.clusters.dtype, buffer=clusters_shm.buf)
+            np.copyto(shared_clusters, self.clusters) #this array is static, only copy once
+
+            # For the intra and inter distances, only copy them during iterations since they are updated dduring the local search
+            # Copy closest_distances_intra to shared memory
+            closest_distances_intra_shm = shm.SharedMemory(create=True, size=self.closest_distances_intra.nbytes)
+            shared_closest_distances_intra = np.ndarray(self.closest_distances_intra.shape, dtype=self.closest_distances_intra.dtype, buffer=closest_distances_intra_shm.buf)
+            # Copy closest_points_intra to shared memory
+            closest_points_intra_shm = shm.SharedMemory(create=True, size=self.closest_points_intra.nbytes)
+            shared_closest_points_intra = np.ndarray(self.closest_points_intra.shape, dtype=self.closest_points_intra.dtype, buffer=closest_points_intra_shm.buf)
+            # Copy closest_distances_inter to shared memory
+            closest_distances_inter_shm = shm.SharedMemory(create=True, size=self.closest_distances_inter.nbytes)
+            shared_closest_distances_inter = np.ndarray(self.closest_distances_inter.shape, dtype=self.closest_distances_inter.dtype, buffer=closest_distances_inter_shm.buf)
+            # Copy closest_points_inter to shared memory
+            closest_points_inter_shm = shm.SharedMemory(create=True, size=self.closest_points_inter_array.nbytes)
+            shared_closest_points_inter = np.ndarray(self.closest_points_inter_array.shape, dtype=self.closest_points_inter_array.dtype, buffer=closest_points_inter_shm.buf)
+            
+            with Manager() as manager:
+                event = manager.Event() #this is used to signal when tasks should be stopped
+                results = manager.list() #this is used to store an improvement is one is found
+
+                with Pool(
+                    processes=num_cores,
+                    initializer=init_worker,
+                    initargs=(
+                        distances_shm.name, shared_distances.shape,
+                        clusters_shm.name, shared_clusters.shape,
+                        closest_distances_intra_shm.name, shared_closest_distances_intra.shape,
+                        closest_points_intra_shm.name, shared_closest_points_intra.shape,
+                        closest_distances_inter_shm.name, shared_closest_distances_inter.shape,
+                        closest_points_inter_shm.name, shared_closest_points_inter.shape,
+                        self.unique_clusters, self.cost_per_cluster, self.num_points
+                    ),
+                ) as pool:
+                    
+                    start_time = time.time()
+                    while iteration < max_iterations:
+                        current_iteration_time = time.time()
+                        objectives.append(self.objective)
+                        solution_changed = False
+                        run_in_multiprocessing = False
+                        if dynamically_check:
+                            move_generator = self.generate_moves_biased(
+                                iteration=iteration, 
+                                random_move_order=random_move_order, 
+                                random_index_order=random_index_order, 
+                                order=move_order,
+                                decay_rate=decay_rate, 
+                                start_p=start_p
+                            )
+                        else:
+                            move_generator = self.generate_moves(
+                                random_move_order=random_move_order, 
+                                random_index_order=random_index_order, 
+                                order=move_order
+                            )
+
+                        move_counter = 0
+                        for move_type, move_content in move_generator:
+                            move_counter += 1
+                            if move_type == "add":
+                                candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(move_content, local_search=True)
+                                if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
+                                    solution_changed = True
+                                    break
+                            elif move_type == "swap":
+                                idx_to_add, idx_to_remove = move_content
+                                candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idx_to_add, idx_to_remove)
+                                if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
+                                    solution_changed = True
+                                    break
+                            elif move_type == "doubleswap":
+                                idxs_to_add, idx_to_remove = move_content
+                                candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_doubleswap(idxs_to_add, idx_to_remove)
+                                if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
+                                    solution_changed = True
+                                    break
+                            elif move_type == "remove":
+                                idx_to_remove = move_content
+                                candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=True)
+                                if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
+                                    solution_changed = True
+                                    break
+
+                            if move_counter % 1_000 == 0: #every 1000 moves, check if we should switch to multiprocessing or terminate
+                                # Check if total runtime exceeds max_runtime
+                                if time.time() - start_time > max_runtime:
+                                    if logging:
+                                        print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                                    return time_per_iteration, objectives
+                                # Check if current iteration should switch to multiprocessing
+                                if time.time() - current_iteration_time > runtime_switch:
+                                    if logging:
+                                        print(f"Iteration {iteration+1} is taking longer than {runtime_switch} seconds, switching to multiprocessing.", flush=True)
+                                    run_in_multiprocessing = True
+                                    break #break out of singleprocessing
+
+                        if run_in_multiprocessing: #If switching to multiprocessing
+                            # Start by updating shared memory arrays
+                            np.copyto(shared_closest_distances_intra, self.closest_distances_intra)
+                            np.copyto(shared_closest_points_intra, self.closest_points_intra)
+                            np.copyto(shared_closest_distances_inter, self.closest_distances_inter)
+                            np.copyto(shared_closest_points_inter, self.closest_points_inter_array)
+                            
+                            event.clear() #reset event for current iteration
+                            results = [] #resets results for current iteration
+
+                            num_solutions_tried = 0
+                            # Try moves in batches
+                            while True:
+                                batches = []
+                                num_this_loop = 0
+                                cur_batch_time = time.time()
+                                for _ in range(max_batches): #fill list with up to max_batches batches
+                                    batch = []
+                                    try:
+                                        for _ in range(batch_size):
+                                            move_type, move_content = next(move_generator)
+                                            batch.append((move_type, move_content))
+                                    except StopIteration:
+                                        if len(batch) > 0:
+                                            batches.append(batch)
+                                            num_this_loop += len(batch)
+                                        break
+                                    if len(batch) > 0:
+                                        batches.append(batch)
+                                        num_this_loop += len(batch)
+
+                                # Process current collection of batches in parallel
+                                if len(batches) > 0:
+                                    batch_results = []
+                                    for batch in batches:
+                                        if event.is_set():
+                                            break
+                                        res = pool.apply_async(
+                                            process_batch,
+                                            args=(
+                                                batch, event, 
+                                                self.selection_per_cluster, self.nonselection_per_cluster,
+                                                self.objective
+                                            ),
+                                            callback = lambda result: process_batch_result(result, results)
+                                        )
+                                        batch_results.append(res)
+
+                                    for result in batch_results:
+                                        result.wait()
+
+                                    if len(results) > 0: #if improvement is found, stop processing batches
+                                        solution_changed = True
+                                        move_type, move_content, candidate_objective, add_within_cluster, add_for_other_clusters = results[0]
+                                        break
+                                    else:
+                                        num_solutions_tried += num_this_loop
+                                        if logging:
+                                            print(f"Processed {num_solutions_tried} solutions (current batch took {time.time() - cur_batch_time:.2f}s), no improvement found yet.", flush=True)
+                                    if time.time() - start_time > max_runtime:
+                                        if logging:
+                                            print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                                        return time_per_iteration, objectives
+                                else: # No more tasks to process, break while loop
+                                    break
+
+                        time_per_iteration.append(time.time() - current_iteration_time)
+                        if solution_changed: # If improvement is found, update solution
+                            self.accept_move(move_type, move_content, candidate_objective, add_within_cluster, add_for_other_clusters)
+                            iteration += 1 #update iteration count
+                            # Check if time exceeds allowed runtime
+                            if time.time() - start_time > max_runtime:
+                                if logging:
+                                    print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                                return time_per_iteration, objectives
+                            # Check if doubleswaps should be removed
+                            if check_doubleswap and dynamically_check:
+                                recent_moves.append(move_type)
+                                if len(recent_moves) == max_move_queue_size:
+                                    num_doubleswaps = sum(1 for move in recent_moves if move == "doubleswap")
+                                    if num_doubleswaps < min_doubleswaps:
+                                        check_doubleswap = False
+                                        del recent_moves
+                                        move_order = [move for move in move_order if move != "doubleswap"]
+                                        if logging:
+                                            print(f"Disabled doubleswap moves after {iteration} iterations due to insufficient doubleswaps in the last {max_move_queue_size} moves.", flush=True)
+
+                        else:
+                            break
+                                
+                        if iteration % logging_frequency == 0 and logging:
+                            print(f"Iteration {iteration}: Objective = {self.objective:.6f}", flush=True)
+                            print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
+        except Exception as e:
+            print(f"An error occurred during local search: {e}", flush=True)
+            print("Traceback details:", flush=True)
+            traceback.print_exc()
+            raise e
+        finally:
+            # Clean up shared memory if it was created
+            if distances_shm:
+                try:
+                    distances_shm.close()
+                    distances_shm.unlink()
+                except FileNotFoundError:
+                    print("Shared memory for distances already unlinked, exiting as normal.", flush=True)
+            if clusters_shm:
+                try:
+                    clusters_shm.close()
+                    clusters_shm.unlink()
+                except FileNotFoundError:
+                    print("Shared memory for clusters already unlinked, exiting as normal.", flush=True)
+            if closest_distances_intra_shm:
+                try:
+                    closest_distances_intra_shm.close()
+                    closest_distances_intra_shm.unlink()
+                except FileNotFoundError:
+                    print("Shared memory for closest distances intra already unlinked, exiting as normal.", flush=True)
+            if closest_points_intra_shm:
+                try:
+                    closest_points_intra_shm.close()
+                    closest_points_intra_shm.unlink()
+                except FileNotFoundError:
+                    print("Shared memory for closest points intra already unlinked, exiting as normal.", flush=True)
+            if closest_distances_inter_shm:
+                try:
+                    closest_distances_inter_shm.close()
+                    closest_distances_inter_shm.unlink()
+                except FileNotFoundError:
+                    print("Shared memory for closest distances inter already unlinked, exiting as normal.", flush=True)
+            if closest_points_inter_shm:
+                try:
+                    closest_points_inter_shm.close()
+                    closest_points_inter_shm.unlink()
+                except FileNotFoundError:
+                    print("Shared memory for closest points inter already unlinked, exiting as normal.", flush=True)
+
+        return time_per_iteration, objectives
+
+    def local_search(self, 
+                    max_iterations: int = 10_000, num_cores: int = 1, hybrid: bool = True,
+                    random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
+                    batch_size: int = 1000, max_batches: int = 32, 
+                    runtime_switch: float = 1.0, num_switch: int = 5,
+                    logging: bool = False, logging_frequency: int = 500,
+                    ):
         """
         Perform local search to find a (local) optimal solution. Allows for both
         single-core and multi-core execution.
@@ -1309,13 +1883,14 @@ class Solution:
 
         return time_per_iteration, objectives, switch_iteration
 
-    def local_search_adaptive(self, max_iterations: int = 10_000, num_cores: int = 2,
-                           random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
-                           batch_size: int = 1000, max_batches: int = 32, 
-                           runtime_switch: float = 10.0,
-                           dynamically_check: bool = False, max_move_queue_size: int = 1000, min_doubleswaps: int = 1, start_p: float = 0.25, decay_rate: float = 0.01,
-                           logging: bool = False, logging_frequency: int = 500,
-                           ):
+    def local_search_adaptive(self, 
+                            max_iterations: int = 10_000, num_cores: int = 2,
+                            random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
+                            batch_size: int = 1000, max_batches: int = 32, 
+                            runtime_switch: float = 10.0,
+                            dynamically_check: bool = False, max_move_queue_size: int = 1000, min_doubleswaps: int = 1, start_p: float = 0.25, decay_rate: float = 0.01,
+                            logging: bool = False, logging_frequency: int = 500,
+                            ):
         """
         Perform local search to find a (local) optimal solution using an adaptive approach where
         the search switches between single-core and multi-core execution based on the runtime of iterations.
@@ -1378,7 +1953,7 @@ class Solution:
         start_p: float
             The starting probability for testing a doubleswap move.
             NOTE: This probability should be larger than 1/4 to ensure that
-            doubleswaps are test enough to conclude that they can be
+            doubleswaps are tested enough to conclude that they can be
             omitted.
         decay_rate: float
             The rate at which the probability for testing a doubleswap move decays.
@@ -1947,7 +2522,6 @@ class SolutionAverage(Solution):
     """
     A specialized version of the Solution class that calculates inter-cluster distances
     as the average of similarities between cluster representatives of different clusters.
-    This is an experimental version and may not be suitable for all use cases.
     """
     def __init__(self, distances: np.ndarray, clusters: np.ndarray, selection=None, selection_cost: float = 1.0, cost_per_cluster: int = 0, softmax_beta: float = 0.0, seed=None):
         # Assert that distances and clusters have the same number of rows
@@ -2591,19 +3165,23 @@ class SolutionAverage(Solution):
         elif move_type == "remove":
             idx_to_remove = move_content
             self.accept_remove(idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
-
-    def local_search(self, max_iterations: int = 10_000,
-                           random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
-                           logging: bool = False, logging_frequency: int = 500,
-                           ):
+    
+    ''' I think this can safely be removed as it is also inherited from parent class
+    def local_search_sp(self, 
+                        max_iterations: int = 10_000, max_runtime: float = np.inf,
+                        random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
+                        dynamically_check: bool = False, max_move_queue_size: int = 1000, min_doubleswaps: int = 1, start_p: float = 0.25, decay_rate: float = 0.01,
+                        logging: bool = False, logging_frequency: int = 500,
+                        ):
         """
-        Perform local search to find a (local) optimal solution. Allows for both
-        single-core and multi-core execution.
+        Perform local search to find a (local) optimal solution using a single processor. 
         
         Parameters:
         -----------
         max_iterations: int
             The maximum number of iterations to perform.
+        max_runtime: float
+            The maximum runtime in seconds for the local search.
         random_move_order: bool
             If True, the order of moves (add, swap, doubleswap,
             remove) is randomized.
@@ -2624,6 +3202,24 @@ class SolutionAverage(Solution):
                 - "remove"
             NOTE: by leaving out a move type, it will not be
             considered in the local search.
+        dynamically_check: bool
+            If True, doubleswaps will be dynamically checked based on the recent moves,
+            and will be omitted if not performed frequently enough.
+            NOTE: If set to false, doubleswaps will always be checked
+            and all moves are assigned equal probability.
+        max_move_queue_size: int
+            The maximum number of moves to keep track of in the recent moves queue.
+        min_doubleswaps: int
+            The minimum number of doubleswaps in the last max_move_queue_size moves
+            before doubleswaps are omitted.
+        start_p: float
+            The starting probability for testing a doubleswap move.
+            NOTE: This probability should be larger than 1/4 to ensure that
+            doubleswaps are tested enough to conclude that they can be
+            omitted.
+        decay_rate: float
+            The rate at which the probability for testing a doubleswap move decays.
+            NOTE: This should be a small positive number, e.g. 0.01.
         logging: bool
             If True, information about the local search will be printed.
         logging_frequency: int
@@ -2645,25 +3241,67 @@ class SolutionAverage(Solution):
             raise ValueError("random_move_order must be a boolean value.")
         if not isinstance(random_index_order, bool):
             raise ValueError("random_index_order must be a boolean value.")
+        if not isinstance(move_order, list):
+            raise ValueError("move_order must be a list of move types.")
+        else:
+            if len(move_order) == 0:
+                raise ValueError("move_order must contain at least one move type.")
+            valid_moves = {"add", "swap", "doubleswap", "remove"}
+            if len(set(move_order) - valid_moves) > 0:
+                raise ValueError("move_order must contain only the following move types: add, swap, doubleswap, remove.")
+        if not isinstance(dynamically_check, bool):
+            raise ValueError("dynamically_check must be a boolean value.")
+        if not isinstance(max_move_queue_size, int) or max_move_queue_size < 1:
+            raise ValueError("max_move_queue_size must be a positive integer.")
+        if not isinstance(min_doubleswaps, int) or min_doubleswaps < 0:
+            raise ValueError("min_doubleswaps must be a non-negative integer.")
+        if not isinstance(start_p, float) or not (0 < start_p <= 1):
+            raise ValueError("start_p must be a float between 0 (exclusive) and 1 (inclusive).")
+        if not isinstance(decay_rate, float) or decay_rate < 0:
+            raise ValueError("decay_rate must be a non-negative float.")
+        if not isinstance(logging, bool):
+            raise ValueError("logging must be a boolean value.")
+        if not isinstance(logging_frequency, int) or logging_frequency < 1:
+            raise ValueError("logging_frequency must be a positive integer.")  
         if not self.feasible:
             raise ValueError("The solution is infeasible, cannot perform local search.")
 
-        # Initialize variables
+        # Initialize variables for tracking the local search progress
         iteration = 0
         time_per_iteration = []
         objectives = []
         solution_changed = False
+        # Initialize variables for dynamically checking doubleswaps
+        if dynamically_check:
+            recent_moves = deque(maxlen=max_move_queue_size)
+            check_doubleswap = True
+        else:
+            check_doubleswap = False
 
+        start_time = time.time()
         while iteration < max_iterations:
+            current_iteration_time = time.time()
             objectives.append(self.objective)
             solution_changed = False
-            move_generator = self.generate_moves(
-                random_move_order=random_move_order, 
-                random_index_order=random_index_order, 
-                order=move_order
-            )
-            current_iteration_time = time.time()
+            if dynamically_check:
+                move_generator = self.generate_moves_biased(
+                    iteration=iteration,
+                    random_move_order=random_move_order,
+                    random_index_order=random_index_order,
+                    order=move_order,
+                    decay_rate=decay_rate,
+                    start_p=start_p
+                )
+            else:
+                move_generator = self.generate_moves(
+                    random_move_order=random_move_order, 
+                    random_index_order=random_index_order, 
+                    order=move_order
+                )
+
+            move_counter = 0
             for move_type, move_content in move_generator:
+                move_counter += 1
                 if move_type == "add":
                     idx_to_add = move_content
                     candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=True)
@@ -2683,27 +3321,51 @@ class SolutionAverage(Solution):
                         solution_changed = True
                         break
 
-            current_iteration_time = time.time() - current_iteration_time
-            time_per_iteration.append(current_iteration_time)
+                if move_counter % 1_000 == 0:
+                    if time.time() - start_time > max_runtime:
+                        if logging:
+                            print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                        return time_per_iteration, objectives
+
+            time_per_iteration.append(time.time() - current_iteration_time)
             if solution_changed: # If improvement is found, update solution
                 self.accept_move(move_type, move_content, candidate_objective, add_within_cluster, add_for_other_clusters)
                 iteration += 1
+                # Check if time exceeds allowed runtime
+                if time.time() - start_time > max_runtime:
+                    if logging:
+                        print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                    return time_per_iteration, objectives
+                # Check if doubleswaps should be removed
+                if check_doubleswap and dynamically_check:
+                    recent_moves.append(move_type)
+                    if len(recent_moves) >= max_move_queue_size:
+                        num_doubleswaps = sum(1 for move in recent_moves if move == "doubleswap")
+                        if num_doubleswaps < min_doubleswaps:
+                            check_doubleswap = False
+                            del recent_moves
+                            move_order = [move for move in move_order if move != "doubleswap"]
+                            if logging:
+                                print(f"Disabled doubleswap moves after {iteration} iterations due to insufficient doubleswaps in the last {max_move_queue_size} moves.", flush=True)
             else:
                 break
 
             if iteration % logging_frequency == 0 and logging:
-                print(f"Iteration {iteration}: Objective = {self.objective:.14f}", flush=True)
+                print(f"Iteration {iteration}: Objective = {self.objective:.10f}", flush=True)
                 print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
 
         return time_per_iteration, objectives
+    '''
 
-    def local_search_adaptive(self, max_iterations: int = 10_000, num_cores: int = 2,
-                           random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
-                           batch_size: int = 1000, max_batches: int = 32, 
-                           runtime_switch: float = 10.0,
-                           dynamically_check: bool = False, max_move_queue_size: int = 1000, min_doubleswaps: int = 1, start_p: float = 0.25, decay_rate: float = 0.01,
-                           logging: bool = False, logging_frequency: int = 500,
-                           ):
+    def local_search_mp(self, 
+                        max_iterations: int = 10_000, max_runtime: float = np.inf,
+                        num_cores: int = 2,
+                        random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
+                        batch_size: int = 1000, max_batches: int = 32, 
+                        runtime_switch: float = 10.0,
+                        dynamically_check: bool = False, max_move_queue_size: int = 1000, min_doubleswaps: int = 1, start_p: float = 0.25, decay_rate: float = 0.01,
+                        logging: bool = False, logging_frequency: int = 500,
+                        ):
         """
         Perform local search to find a (local) optimal solution using an adaptive approach where
         the search switches between single-core and multi-core execution based on the runtime of iterations.
@@ -2711,6 +3373,8 @@ class SolutionAverage(Solution):
         Parameters:
         max_iterations: int
             The maximum number of iterations to perform.
+        max_runtime: float
+            The maximum runtime in seconds for the local search.
         num_cores: int
             The number of cores to use for parallel processing.
             NOTE: if set to 1, local search will always run in
@@ -2794,23 +3458,44 @@ class SolutionAverage(Solution):
             raise ValueError("random_move_order must be a boolean value.")
         if not isinstance(random_index_order, bool):
             raise ValueError("random_index_order must be a boolean value.")
-        if not isinstance(batch_size, int) or batch_size < 1:
-            raise ValueError("batch_size must be a positive integer.")
-        if not isinstance(max_batches, int) or max_batches < 1:
-            raise ValueError("max_batches must be a positive integer.")
-        if not isinstance(runtime_switch, (int, float)) or runtime_switch < 0:
-            raise ValueError("runtime_switch must be a non-negative number.")
+        if not isinstance(move_order, list):
+            raise ValueError("move_order must be a list of move types.")
+        else:
+            if len(move_order) == 0:
+                raise ValueError("move_order must contain at least one move type.")
+            valid_moves = {"add", "swap", "doubleswap", "remove"}
+            if len(set(move_order) - valid_moves) > 0:
+                raise ValueError("move_order must contain only the following move types: add, swap, doubleswap, remove.")
+        if not isinstance(dynamically_check, bool):
+            raise ValueError("dynamically_check must be a boolean value.")
+        if not isinstance(max_move_queue_size, int) or max_move_queue_size < 1:
+            raise ValueError("max_move_queue_size must be a positive integer.")
+        if not isinstance(min_doubleswaps, int) or min_doubleswaps < 0:
+            raise ValueError("min_doubleswaps must be a non-negative integer.")
+        if not isinstance(start_p, float) or not (0 < start_p <= 1):
+            raise ValueError("start_p must be a float between 0 (exclusive) and 1 (inclusive).")
+        if not isinstance(decay_rate, float) or decay_rate < 0:
+            raise ValueError("decay_rate must be a non-negative float.")
+        if not isinstance(logging, bool):
+            raise ValueError("logging must be a boolean value.")
+        if not isinstance(logging_frequency, int) or logging_frequency < 1:
+            raise ValueError("logging_frequency must be a positive integer.")  
         if not self.feasible:
             raise ValueError("The solution is infeasible, cannot perform local search.")
 
-        # Initialize variables
+        # Initialize variables for tracking the local search progress
         iteration = 0
         time_per_iteration = []
         objectives = []
         solution_changed = False
+        # Initialize variables for dynamically checking doubleswaps
+        if dynamically_check:
+            recent_moves = deque(maxlen=max_move_queue_size)
+            check_doubleswap = True
+        else:
+            check_doubleswap = False
+        # Initialize variables for multiprocessing
         run_in_multiprocessing = False
-        recent_moves = deque(maxlen=max_move_queue_size) #used to track whether doubleswaps should be considered
-        check_doubleswap = True
 
         # Multiprocessing
         try:
@@ -2854,18 +3539,29 @@ class SolutionAverage(Solution):
                         self.unique_clusters, self.cost_per_cluster, self.num_points, self.num_clusters, self.beta, self.logsum_factor,
                     ),
                 ) as pool:
+                    
+                    start_time = time.time()
                     while iteration < max_iterations:
+                        current_iteration_time = time.time()
                         objectives.append(self.objective)
                         solution_changed = False
                         run_in_multiprocessing = False
-
                         if dynamically_check:
-                            move_generator = self.generate_moves_biased(iteration, random_move_order=random_move_order, random_index_order=random_index_order, order=move_order,
-                                                                    decay_rate=decay_rate, start_p=start_p)
+                            move_generator = self.generate_moves_biased(
+                                iteration=iteration, 
+                                random_move_order=random_move_order, 
+                                random_index_order=random_index_order, 
+                                order=move_order,
+                                decay_rate=decay_rate, 
+                                start_p=start_p
+                            )
                         else:
-                            move_generator = self.generate_moves(random_move_order=random_move_order, random_index_order=random_index_order, order=move_order)
+                            move_generator = self.generate_moves(
+                                random_move_order=random_move_order, 
+                                random_index_order=random_index_order, 
+                                order=move_order
+                            )
 
-                        current_iteration_time = time.time() #this is for logging purposes and for adaptive mode tracking
                         move_counter = 0
                         for move_type, move_content in move_generator:
                             move_counter += 1
@@ -2886,7 +3582,14 @@ class SolutionAverage(Solution):
                                 if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
                                     solution_changed = True
                                     break
-                            if move_counter % 1_000: #every 1000 moves, check if we should switch to multiprocessing
+
+                            if move_counter % 1_000 == 0: #every 1000 moves, check if we should switch to multiprocessing or terminate
+                                # Check if total runtime exceeds max_runtime
+                                if time.time() - start_time > max_runtime:
+                                    if logging:
+                                        print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                                    return time_per_iteration, objectives
+                                # Check if current iteration should switch to multiprocessing
                                 if time.time() - current_iteration_time > runtime_switch:
                                     if logging:
                                         print(f"Iteration {iteration+1} is taking longer than {runtime_switch} seconds, switching to multiprocessing.", flush=True)
@@ -2952,7 +3655,10 @@ class SolutionAverage(Solution):
                                         num_solutions_tried += num_this_loop
                                         if logging:
                                             print(f"Processed {num_solutions_tried} solutions (current batch took {time.time() - cur_batch_time:.2f}s), no improvement found yet.", flush=True)
-
+                                    if time.time() - start_time > max_runtime:
+                                        if logging:
+                                            print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                                        return time_per_iteration, objectives
                                 else: # No more tasks to process, break while loop
                                     break
 
@@ -2960,7 +3666,12 @@ class SolutionAverage(Solution):
                         if solution_changed: # If improvement is found, update solution
                             self.accept_move(move_type, move_content, candidate_objective, add_within_cluster, add_for_other_clusters)
                             iteration += 1 #update iteration count
-
+                            # Check if time exceeds allowed runtime
+                            if time.time() - start_time > max_runtime:
+                                if logging:
+                                    print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                                return time_per_iteration, objectives
+                            # Check if doubleswaps should be removed
                             if check_doubleswap and dynamically_check:
                                 recent_moves.append(move_type)
                                 if len(recent_moves) == max_move_queue_size:
