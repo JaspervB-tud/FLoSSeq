@@ -788,10 +788,69 @@ def test_accept_swap_large_3():
     # Test if solution objects are the same
     assert solution_object == expected_solution
 
+# TESTS FOR "evaluate_swap" METHOD (double swap)
+def test_evaluate_doubleswap_large_1():
+    """Test the evaluation of swapping a triplet of points in a large solution."""
+    distances = DISTANCES_LARGE
+    clusters = CLUSTERS_LARGE
+    selection_cost = 0.1
+    selection = np.array([True, False, False,   True,   True, False,    True, False, False, False], dtype=bool)
+    idx_to_add1 = 1
+    idx_to_add2 = 2
+    idx_to_remove = 0
+    new_selection = selection.copy()
+    new_selection[idx_to_add1] = True
+    new_selection[idx_to_add2] = True
+    new_selection[idx_to_remove] = False
 
+    solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
+    expected_candidate_objective, _ = calculate_objective(
+        new_selection, distances, clusters, selection_cost
+    )
+    expected_intra_changes = [
+        (idx_to_add1, idx_to_add1, 0.0),
+        (idx_to_add2, idx_to_add2, 0.0),
+        (idx_to_remove, idx_to_add1, 0.2)
+    ]
+    expected_inter_changes = [
+        (1, (idx_to_add2, 3), 0.8),
+        (2, (idx_to_add2, 4), 0.6),
+        (3, (idx_to_add2, 6), 0.5),
+    ]
 
+    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap([idx_to_add1, idx_to_add2], idx_to_remove)
 
+    # Compare objective values
+    np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
+    # Compare intra changes
+    compare_intra_changes(actual_intra_changes, expected_intra_changes)
+    # Compare inter changes
+    compare_inter_changes(actual_inter_changes, expected_inter_changes)
+
+# TESTS FOR "accept_move" METHOD (double swap)
+def test_accept_doubleswap_large_1():
+    """Test the acceptance of swapping a triplet of points in a large solution."""
+    distances = DISTANCES_LARGE
+    clusters = CLUSTERS_LARGE
+    selection_cost = 0.1
+    selection = np.array([True, False, False, True, True, False, True, False, False, False], dtype=bool)
+    idx_to_add1 = 1
+    idx_to_add2 = 2
+    idx_to_remove = 0
+    new_selection = selection.copy()
+    new_selection[idx_to_add1] = True
+    new_selection[idx_to_add2] = True
+    new_selection[idx_to_remove] = False
+
+    solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
+    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap([idx_to_add1, idx_to_add2], idx_to_remove)
+    solution_object.accept_move_universal([idx_to_add1, idx_to_add2], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+
+    expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
+
+    # Test if solution objects are the same
+    assert solution_object == expected_solution
 
 
 
