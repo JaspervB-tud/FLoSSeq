@@ -976,10 +976,82 @@ def test_evaluate_remove_large_1():
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
 
+# TESTS FOR "accept_move" METHOD (remove)
+def test_accept_remove_small_1():
+    """Test the acceptance of removing a point from a small solution."""
+    distances = DISTANCES_SMALL
+    clusters = CLUSTERS_SMALL
+    selection_cost = 0.1
+    selection = np.array([True, True, True], dtype=bool)
+    idx_to_remove = 1
+    new_selection = selection.copy()
+    new_selection[idx_to_remove] = False
 
+    solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
+    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    solution_object.accept_move_universal([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
+    expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
+    # Test if solution objects are the same
+    assert solution_object == expected_solution
 
+def test_accept_remove_small_2():
+    """Test the acceptance of removing a point from a small solution."""
+    distances = DISTANCES_SMALL
+    clusters = CLUSTERS_SMALL
+    selection_cost = 0.1
+    selection = np.array([True, True, True], dtype=bool)
+    idx_to_remove = 2
+    new_selection = selection.copy()
+    new_selection[idx_to_remove] = False
+
+    solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
+    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    solution_object.accept_move_universal([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+
+    expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
+
+    # Test if solution objects are the same
+    assert solution_object == expected_solution
+
+def test_accept_remove_medium_1():
+    """Test the acceptance of removing a point from a medium solution."""
+    distances = DISTANCES_MEDIUM
+    clusters = CLUSTERS_MEDIUM
+    selection_cost = 0.1
+    selection = np.array([True, True, True, True, True, True], dtype=bool)
+    idx_to_remove = 2
+    new_selection = selection.copy()
+    new_selection[idx_to_remove] = False
+
+    solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
+    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    solution_object.accept_move_universal([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+
+    expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
+
+    # Test if solution objects are the same
+    assert solution_object == expected_solution
+
+def test_accept_remove_large_1():
+    """Test the acceptance of removing a point from a medium solution."""
+    distances = DISTANCES_LARGE
+    clusters = CLUSTERS_LARGE
+    selection_cost = 0.1
+    selection = np.array([False, True, True,   True,   True, False,    True, False, False, False], dtype=bool)
+    idx_to_remove = 1
+    new_selection = selection.copy()
+    new_selection[idx_to_remove] = False
+
+    solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
+    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    solution_object.accept_move_universal([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+
+    expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
+
+    # Test if solution objects are the same
+    assert solution_object == expected_solution
 
 # This function calculates the total objective function from scratch, as well as its components for a given solution.
 def calculate_objective(selection, distances, clusters, cost_per_cluster):
