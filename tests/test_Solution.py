@@ -280,7 +280,7 @@ def test_accept_add_small_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move_universal([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -299,7 +299,7 @@ def test_accept_add_small_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move_universal([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -318,7 +318,7 @@ def test_accept_add_medium_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move_universal([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -337,7 +337,7 @@ def test_accept_add_medium_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move_universal([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -356,7 +356,7 @@ def test_accept_add_medium_3():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move_universal([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -375,7 +375,7 @@ def test_accept_add_large_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move_universal([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -394,7 +394,7 @@ def test_accept_add_large_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move_universal([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -656,7 +656,7 @@ def test_accept_swap_small_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move_universal([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -677,7 +677,7 @@ def test_accept_swap_medium_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move_universal([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -698,7 +698,7 @@ def test_accept_swap_medium_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move_universal([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -719,7 +719,7 @@ def test_accept_swap_medium_3():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move_universal([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -740,7 +740,7 @@ def test_accept_swap_large_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move_universal([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -761,7 +761,7 @@ def test_accept_swap_large_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move_universal([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -782,7 +782,7 @@ def test_accept_swap_large_3():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move_universal([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -846,7 +846,7 @@ def test_accept_doubleswap_large_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap([idx_to_add1, idx_to_add2], idx_to_remove)
-    solution_object.accept_move_universal([idx_to_add1, idx_to_add2], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([idx_to_add1, idx_to_add2], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -989,7 +989,7 @@ def test_accept_remove_small_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
-    solution_object.accept_move_universal([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -1008,7 +1008,7 @@ def test_accept_remove_small_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
-    solution_object.accept_move_universal([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -1027,7 +1027,7 @@ def test_accept_remove_medium_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
-    solution_object.accept_move_universal([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -1046,7 +1046,7 @@ def test_accept_remove_large_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
     candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
-    solution_object.accept_move_universal([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    solution_object.accept_move([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
