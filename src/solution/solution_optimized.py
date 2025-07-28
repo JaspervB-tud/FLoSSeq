@@ -1034,25 +1034,27 @@ class Solution:
         local_search: bool
             If True, the method will return (np.inf, None, None) if the candidate objective
             is worse than the current objective, allowing for local search to skip unnecessary evaluations.
-            If False, it will always evaluate the addition.
+            If False, it will always evaluate the removal.
         
         Returns:
         --------
         candidate_objective: float
-            The objective value of the solution after the addition.
+            The objective value of the solution after the removal.
+            NOTE: If local_search is True, the returned vanlue can be np.inf if
+            the candidate objective is worse than the current objective based
+            on inter distances.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
         add_for_other_clusters: list of tuples
             The changes to be made for other clusters.
-            Structure: [(index_other_cluster, closest_point_pair, new_distance)]
+            Structure: [(index_other_cluster, (point_in_this_cluster, point_in_other_cluster), new_distance)]
         """
         if not self.feasible:
             raise ValueError("The solution is infeasible, cannot evaluate removal.")
         if not self.selection[idx_to_remove]:
             raise ValueError("The point to remove must be selected.")
         cluster = self.clusters[idx_to_remove]
-        candidate_objective = self.objective - self.cost_per_cluster[cluster]
 
         # Generate pool of alternative points to compare to
         new_selection = set(self.selection_per_cluster[cluster])
@@ -1060,40 +1062,33 @@ class Solution:
         new_nonselection = set(self.nonselection_per_cluster[cluster])
         new_nonselection.add(idx_to_remove)
 
-        # Calculate inter cluster distances for all other clusters (start with inter here for local_search optimization)
-        #  - Check if removed point was closest selected point for any of the other clusters -> if so replace with another point (looping over all selected points in cluster)
-        add_for_other_clusters = []
+        # Calculate selection cost
+        candidate_objective = self.objective - self.cost_per_cluster[cluster]
+
+        # Calculate inter-cluster distances
+        add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
         for other_cluster in self.unique_clusters:
             if other_cluster != cluster:
                 cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
-                if other_cluster < cluster:
-                    cur_closest_point = self.closest_points_inter[other_cluster, cluster][1]
-                else:
-                    cur_closest_point = self.closest_points_inter[cluster, other_cluster][0]
-                cur_closest_pair = (-1, -1) #from - to (considered from perspective of "other_cluster")
+                cur_closest_pair = (-1, -1)
                 if cur_closest_point == idx_to_remove:
                     cur_closest_similarity = -np.inf
                     for idx in self.selection_per_cluster[other_cluster]:
                         for other_idx in new_selection:
-                            cur_similarity = 1 - get_distance(idx, other_idx, self.distances, self.num_points)
+                            cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
                             if cur_similarity > cur_closest_similarity:
                                 cur_closest_similarity = cur_similarity
-                                if other_cluster < cluster:
-                                    cur_closest_pair = (idx, other_idx)
-                                else:
-                                    cur_closest_pair = (other_idx, idx)
+                                cur_closest_pair = (other_idx, idx)
                     candidate_objective += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster]
                     add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
         
         # NOTE: Intra-cluster distances can only increase when removing a point, so when doing local search we can exit here if objective is worse
-        if candidate_objective > self.objective and np.abs(self.objective - candidate_objective) > 1e-5 and local_search:
+        if candidate_objective > self.objective and np.abs(self.objective - candidate_objective) > PRECISION_THRESHOLD and local_search:
             return np.inf, None, None
-
-        # Calculate intra cluster distances for cluster of removed point
-        #   - Check if removed point was closest selected point for any of the unselected points -> if so, replace with new point
+        
+        # Calculate intra-cluster distances
         add_within_cluster = []
         for idx in new_nonselection:
-            cur_closest_distance = self.closest_distances_intra[idx]
             cur_closest_point = self.closest_points_intra[idx]
             if cur_closest_point == idx_to_remove:
                 cur_closest_distance = np.inf

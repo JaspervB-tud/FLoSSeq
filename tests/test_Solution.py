@@ -852,8 +852,37 @@ def test_accept_doubleswap_large_1():
     # Test if solution objects are the same
     assert solution_object == expected_solution
 
+# TESTS FOR "evaluate_remove" METHOD
+def test_evaluate_remove_small_1():
+    """Test the evaluation of adding a point to a small solution."""
+    distances = DISTANCES_SMALL
+    clusters = CLUSTERS_SMALL
+    selection_cost = 0.1
+    selection = np.array([True, True, True], dtype=bool) #adding the point should improve intra and affect inter
+    idx_to_remove = 1
+    new_selection = selection.copy()
+    new_selection[idx_to_remove] = False
 
+    solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
+    expected_candidate_objective, _ = calculate_objective(
+        new_selection, distances, clusters, selection_cost
+    )
+    expected_intra_changes = [
+        (idx_to_add, idx_to_add, 0.0)
+    ]
+    expected_inter_changes = [
+        (0, (idx_to_add, 0), 0.9),  # Cluster 0, point 1 in cluster 0, point 2 in cluster 1
+    ]
+
+    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
+
+    # Compare objective values
+    np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
+    # Compare intra changes
+    compare_intra_changes(actual_intra_changes, expected_intra_changes)
+    # Compare inter changes
+    compare_inter_changes(actual_inter_changes, expected_inter_changes)
 
 
 
