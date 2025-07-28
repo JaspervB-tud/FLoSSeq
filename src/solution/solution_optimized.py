@@ -471,9 +471,6 @@ class Solution:
         --------
         candidate_objective: float
             The objective value of the solution after the addition.
-            NOTE: If local_search is True, the returned value can be np.inf if
-            the candidate objective is worse than the current objective based
-            on intra distances.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
@@ -638,9 +635,6 @@ class Solution:
         --------
         candidate_objective: float
             The objective value of the solution after the removal.
-            NOTE: If local_search is True, the returned vanlue can be np.inf if
-            the candidate objective is worse than the current objective based
-            on inter distances.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
@@ -656,14 +650,14 @@ class Solution:
 
         # Generate pool of alternative points to compare to
         new_selection = set(self.selection_per_cluster[cluster])
-        new_selection.discard(idx_to_remove)
+        new_selection.remove(idx_to_remove)
         new_nonselection = set(self.nonselection_per_cluster[cluster])
         new_nonselection.add(idx_to_remove)
 
         # Calculate selection cost
         candidate_objective = self.objective - self.cost_per_cluster[cluster]
 
-        # Calculate inter-cluster distances
+        # Calculate inter-cluster distances for all other clusters
         # NOTE: Intra-cluster distances can only increase when removing a point, Thus if inter-cluster distances
         # increase, we can exit early.
         add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
@@ -2196,7 +2190,7 @@ class SolutionAverage(Solution):
         local_search: bool
             If True, the method will return (np.inf, None, None) if the candidate objective
             is worse than the current objective, allowing for local search to skip unnecessary evaluations.
-            If False, it will always evaluate the addition.
+            If False, it will always evaluate the removal.
         
         Returns:
         --------
@@ -2214,7 +2208,6 @@ class SolutionAverage(Solution):
         if not self.selection[idx_to_remove]:
             raise ValueError("The point to remove must be selected.")
         cluster = self.clusters[idx_to_remove]
-        candidate_objective = self.objective - self.cost_per_cluster[cluster]
 
         # Generate pool of alternative points to compare to
         new_selection = set(self.selection_per_cluster[cluster])
@@ -2222,7 +2215,12 @@ class SolutionAverage(Solution):
         new_nonselection = set(self.nonselection_per_cluster[cluster])
         new_nonselection.add(idx_to_remove)
 
-        # Calculate inter cluster distances for all other clusters
+        # Calculate selection cost
+        candidate_objective = self.objective - self.cost_per_cluster[cluster]
+
+        # Calculate inter-cluster distances for all other clusters
+        # NOTE: Intra-cluster distances can only increase when removing a point, Thus if inter-cluster distances
+        # increase, we can exit early.
         add_for_other_clusters = [] 
         for other_cluster in self.unique_clusters:
             if other_cluster != cluster:
@@ -2234,18 +2232,16 @@ class SolutionAverage(Solution):
                     cur_similarity = 1.0 - get_distance(idx, idx_to_remove, self.distances, self.num_points)
                     new_numerator -= cur_similarity * math.exp(cur_similarity * self.beta - self.logsum_factor)
                     new_denominator -= math.exp(cur_similarity * self.beta - self.logsum_factor)
-                candidate_objective += (new_numerator/new_denominator) - (old_numerator/old_denominator) #change in objective
+                candidate_objective += (new_numerator/new_denominator) - (old_numerator/old_denominator)
                 add_for_other_clusters.append((other_cluster, new_numerator, new_denominator))
 
         # NOTE: Intra-cluster distances can only increase when removing a point, so when doing local search we can exit here if objective is worse
-        if candidate_objective > self.objective and np.abs(self.objective - candidate_objective) > PRECISION_THRESHOLD and local_search:
+        if candidate_objective > self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD and local_search:
             return np.inf, None, None
 
-        # Calculate intra cluster distances for cluster of removed point
-        #   - Check if removed point was closest selected point for any of the unselected points -> if so, replace with new point
+        # Calculate intra-cluster distances
         add_within_cluster = []
         for idx in new_nonselection:
-            cur_closest_distance = self.closest_distances_intra[idx]
             cur_closest_point = self.closest_points_intra[idx]
             if cur_closest_point == idx_to_remove:
                 cur_closest_distance = np.inf
