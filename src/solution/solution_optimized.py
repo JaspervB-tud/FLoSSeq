@@ -1620,6 +1620,139 @@ class SolutionAverage(Solution):
                     self.logsum_factor = max(self.logsum_factor, self.beta*(1.0 - get_distance(i, j, self.distances, self.num_points)))
         self.calculate_objective()
 
+    def __eq__(self, other):
+        """
+        Check if two solutions are equal.
+        NOTE: This purely checks if all attributes are equal, excluding the random state.
+        NOTE: This is mostly duplicate code from parent class except for inter-cluster distances
+        """
+        # Check if other is an instance of the same class
+        if not isinstance(other, type(self)):
+            print("Other object is not of the same type as self.")
+            return False
+        # Check if selections are equal
+        try:
+            if not np.array_equal(self.selection, other.selection):
+                print("Selections are not equal.")
+                return False
+        except:
+            print("Selections could not be compared.")
+            return False
+        # Check if distances are equal
+        try:
+            if not np.allclose(self.distances, other.distances, atol=PRECISION_THRESHOLD):
+                print("Distances are not equal.")
+                return False
+        except:
+            print("Distances could not be compared.")
+            return False
+        # Check if clusters are equal
+        try:
+            if not np.array_equal(self.clusters, other.clusters):
+                print("Clusters are not equal.")
+                return False
+        except:
+            print("Clusters could not be compared.")
+            return False
+        # Check if unique clusters are equal
+        try:
+            if not np.array_equal(self.unique_clusters, other.unique_clusters):
+                print("Unique clusters are not equal.")
+                return False
+        except:
+            print("Unique clusters could not be compared.")
+            return False
+        # Check if selection cost is equal
+        if not math.isclose(self.selection_cost, other.selection_cost, rel_tol=PRECISION_THRESHOLD):
+            print("Selection costs are not equal.")
+            return False
+        # Check if cost per cluster is equal
+        try:
+            if not np.allclose(self.cost_per_cluster, other.cost_per_cluster, atol=PRECISION_THRESHOLD):
+                print("Cost per cluster is not equal.")
+                return False
+        except:
+            print("Cost per cluster could not be compared.")
+            return False
+        # Check if number of points is equal
+        if self.num_points != other.num_points:
+            print("Number of points is not equal.")
+            return False
+        # Check if points per cluster are equal
+        if set(self.points_per_cluster.keys()) != set(other.points_per_cluster.keys()):
+            print("Points per cluster keys are not equal.")
+            return False
+        for cluster in self.points_per_cluster:
+            if self.points_per_cluster[cluster] != other.points_per_cluster[cluster]:
+                print(f"Points in cluster {cluster} are not equal.")
+                return False
+        # Check if selections per cluster are equal
+        if set(self.selection_per_cluster.keys()) != set(other.selection_per_cluster.keys()):
+            print("Selection per cluster keys are not equal.")
+            return False
+        for cluster in self.selection_per_cluster:
+            if self.selection_per_cluster[cluster] != other.selection_per_cluster[cluster]:
+                print(f"Selection in cluster {cluster} is not equal.")
+                return False
+        # Check if non-selections per cluster are equal
+        if set(self.nonselection_per_cluster.keys()) != set(other.nonselection_per_cluster.keys()):
+            print("Non-selection per cluster keys are not equal.")
+            return False
+        for cluster in self.nonselection_per_cluster:
+            if self.nonselection_per_cluster[cluster] != other.nonselection_per_cluster[cluster]:
+                print(f"Non-selection in cluster {cluster} is not equal.")
+                return False
+        # Check if closest intra cluster distances are equal
+        try:
+            if not np.allclose(self.closest_distances_intra, other.closest_distances_intra, atol=PRECISION_THRESHOLD):
+                print("Closest intra cluster distances are not equal.")
+                return False
+        except:
+            print("Closest intra cluster distances could not be compared.")
+            return False
+        # Check if closest intra cluster points are equal
+        try:
+            if not np.array_equal(self.closest_points_intra, other.closest_points_intra):
+                print("Closest intra cluster points are not equal.")
+                return False
+        except:
+            print("Closest intra cluster points could not be compared.")
+            return False
+        # Check if inter cluster numerators are equal
+        try:
+            if not np.allclose(self.distances_inter_numerator, other.distances_inter_numerator, atol=PRECISION_THRESHOLD):
+                print("Inter cluster distances numerators are not equal.")
+                return False
+        except:
+            print("Inter cluster distances numerators could not be compared.")
+            return False
+        # Check if inter cluster denominators are equal
+        try:
+            if not np.allclose(self.distances_inter_denominator, other.distances_inter_denominator, atol=PRECISION_THRESHOLD):
+                print("Inter cluster distances denominators are not equal.")
+                return False
+        except:
+            print("Inter cluster distances denominators could not be compared.")
+            return False
+        # Check if betas are equal
+        if not math.isclose(self.beta, other.beta, rel_tol=PRECISION_THRESHOLD):
+            print("Betas are not equal.")
+            return False
+        # Check if logsum factors are equal
+        if not math.isclose(self.logsum_factor, other.logsum_factor, rel_tol=PRECISION_THRESHOLD):
+            print("Logsum factors are not equal.")
+            return False
+        # Check if feasibilities are equal
+        if self.feasible != other.feasible:
+            print("Feasibilities are not equal.")
+            return False
+        # Check if objectives are equal
+        if not math.isclose(self.objective, other.objective, rel_tol=PRECISION_THRESHOLD):
+            print("Objectives are not equal.")
+            return False
+
+        return True
+
     def calculate_objective(self):
         """
         Calculates the objective value of the solution, as well as set all the
@@ -2188,197 +2321,6 @@ class SolutionAverage(Solution):
         elif move_type == "remove":
             idx_to_remove = move_content
             self.accept_remove(idx_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
-    
-    ''' I think this can safely be removed as it is also inherited from parent class
-    def local_search_sp(self, 
-                        max_iterations: int = 10_000, max_runtime: float = np.inf,
-                        random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
-                        dynamically_check: bool = False, max_move_queue_size: int = 1000, min_doubleswaps: int = 1, start_p: float = 0.25, decay_rate: float = 0.01,
-                        logging: bool = False, logging_frequency: int = 500,
-                        ):
-        """
-        Perform local search to find a (local) optimal solution using a single processor. 
-        
-        Parameters:
-        -----------
-        max_iterations: int
-            The maximum number of iterations to perform.
-        max_runtime: float
-            The maximum runtime in seconds for the local search.
-        random_move_order: bool
-            If True, the order of moves (add, swap, doubleswap,
-            remove) is randomized.
-        random_index_order: bool
-            If True, the order of indices for moves is randomized.
-            NOTE: if random_move_order is True, but this is false,
-            all moves of a particular type will be tried before
-            moving to the next move type, but the order of moves
-            is random).
-        move_order: list
-            If provided, this list will be used to determine the
-            order of moves. If random_move_order is True, this
-            list will be shuffled before use.
-            NOTE: this list should contain the following move types (as strings):
-                - "add"
-                - "swap"
-                - "doubleswap"
-                - "remove"
-            NOTE: by leaving out a move type, it will not be
-            considered in the local search.
-        dynamically_check: bool
-            If True, doubleswaps will be dynamically checked based on the recent moves,
-            and will be omitted if not performed frequently enough.
-            NOTE: If set to false, doubleswaps will always be checked
-            and all moves are assigned equal probability.
-        max_move_queue_size: int
-            The maximum number of moves to keep track of in the recent moves queue.
-        min_doubleswaps: int
-            The minimum number of doubleswaps in the last max_move_queue_size moves
-            before doubleswaps are omitted.
-        start_p: float
-            The starting probability for testing a doubleswap move.
-            NOTE: This probability should be larger than 1/4 to ensure that
-            doubleswaps are tested enough to conclude that they can be
-            omitted.
-        decay_rate: float
-            The rate at which the probability for testing a doubleswap move decays.
-            NOTE: This should be a small positive number, e.g. 0.01.
-        logging: bool
-            If True, information about the local search will be printed.
-        logging_frequency: int
-            If logging is True, information will be printed every
-            logging_frequency iterations.
-
-        Returns:
-        --------
-        time_per_iteration: list of floats
-            The time taken for each iteration.
-            NOTE: this is primarily for logging purposes
-        objectives: list of floats
-            The objective value after each iteration.
-        """
-        # Validate input parameters
-        if not isinstance(max_iterations, int) or max_iterations < 1:
-            raise ValueError("max_iterations must be a positive integer.")
-        if not isinstance(random_move_order, bool):
-            raise ValueError("random_move_order must be a boolean value.")
-        if not isinstance(random_index_order, bool):
-            raise ValueError("random_index_order must be a boolean value.")
-        if not isinstance(move_order, list):
-            raise ValueError("move_order must be a list of move types.")
-        else:
-            if len(move_order) == 0:
-                raise ValueError("move_order must contain at least one move type.")
-            valid_moves = {"add", "swap", "doubleswap", "remove"}
-            if len(set(move_order) - valid_moves) > 0:
-                raise ValueError("move_order must contain only the following move types: add, swap, doubleswap, remove.")
-        if not isinstance(dynamically_check, bool):
-            raise ValueError("dynamically_check must be a boolean value.")
-        if not isinstance(max_move_queue_size, int) or max_move_queue_size < 1:
-            raise ValueError("max_move_queue_size must be a positive integer.")
-        if not isinstance(min_doubleswaps, int) or min_doubleswaps < 0:
-            raise ValueError("min_doubleswaps must be a non-negative integer.")
-        if not isinstance(start_p, float) or not (0 < start_p <= 1):
-            raise ValueError("start_p must be a float between 0 (exclusive) and 1 (inclusive).")
-        if not isinstance(decay_rate, float) or decay_rate < 0:
-            raise ValueError("decay_rate must be a non-negative float.")
-        if not isinstance(logging, bool):
-            raise ValueError("logging must be a boolean value.")
-        if not isinstance(logging_frequency, int) or logging_frequency < 1:
-            raise ValueError("logging_frequency must be a positive integer.")  
-        if not self.feasible:
-            raise ValueError("The solution is infeasible, cannot perform local search.")
-
-        # Initialize variables for tracking the local search progress
-        iteration = 0
-        time_per_iteration = []
-        objectives = []
-        solution_changed = False
-        # Initialize variables for dynamically checking doubleswaps
-        if dynamically_check:
-            recent_moves = deque(maxlen=max_move_queue_size)
-            check_doubleswap = True
-        else:
-            check_doubleswap = False
-
-        start_time = time.time()
-        while iteration < max_iterations:
-            current_iteration_time = time.time()
-            objectives.append(self.objective)
-            solution_changed = False
-            if dynamically_check:
-                move_generator = self.generate_moves_biased(
-                    iteration=iteration,
-                    random_move_order=random_move_order,
-                    random_index_order=random_index_order,
-                    order=move_order,
-                    decay_rate=decay_rate,
-                    start_p=start_p
-                )
-            else:
-                move_generator = self.generate_moves(
-                    random_move_order=random_move_order, 
-                    random_index_order=random_index_order, 
-                    order=move_order
-                )
-
-            move_counter = 0
-            for move_type, move_content in move_generator:
-                move_counter += 1
-                if move_type == "add":
-                    idx_to_add = move_content
-                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=True)
-                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
-                        solution_changed = True
-                        break
-                elif move_type == "swap" or move_type == "doubleswap":
-                    idxs_to_add, idx_to_remove = move_content
-                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
-                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
-                        solution_changed = True
-                        break
-                elif move_type == "remove":
-                    idx_to_remove = move_content
-                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=True)
-                    if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
-                        solution_changed = True
-                        break
-
-                if move_counter % 1_000 == 0:
-                    if time.time() - start_time > max_runtime:
-                        if logging:
-                            print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
-                        return time_per_iteration, objectives
-
-            time_per_iteration.append(time.time() - current_iteration_time)
-            if solution_changed: # If improvement is found, update solution
-                self.accept_move(move_type, move_content, candidate_objective, add_within_cluster, add_for_other_clusters)
-                iteration += 1
-                # Check if time exceeds allowed runtime
-                if time.time() - start_time > max_runtime:
-                    if logging:
-                        print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
-                    return time_per_iteration, objectives
-                # Check if doubleswaps should be removed
-                if check_doubleswap and dynamically_check:
-                    recent_moves.append(move_type)
-                    if len(recent_moves) >= max_move_queue_size:
-                        num_doubleswaps = sum(1 for move in recent_moves if move == "doubleswap")
-                        if num_doubleswaps < min_doubleswaps:
-                            check_doubleswap = False
-                            del recent_moves
-                            move_order = [move for move in move_order if move != "doubleswap"]
-                            if logging:
-                                print(f"Disabled doubleswap moves after {iteration} iterations due to insufficient doubleswaps in the last {max_move_queue_size} moves.", flush=True)
-            else:
-                break
-
-            if iteration % logging_frequency == 0 and logging:
-                print(f"Iteration {iteration}: Objective = {self.objective:.10f}", flush=True)
-                print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
-
-        return time_per_iteration, objectives
-    '''
 
     def local_search_mp(self, 
                         max_iterations: int = 10_000, max_runtime: float = np.inf,
