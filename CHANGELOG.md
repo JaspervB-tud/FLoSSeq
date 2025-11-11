@@ -2,7 +2,6 @@
 All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
 
-<<<<<<< HEAD
 ## [0.1.2] - 17/11/2025
 ### Added
 - Included dashboarding
@@ -12,9 +11,6 @@ This project attempts to follow Keep a Changelog and Semantic Versioning.
 - Changed doubleswap behaviour
     - No longer remove after X non-occurrences in a window of Y moves
     - Removes doubleswap (if enabled) after an iteration has spent X seconds, re-adding next iteration.
-=======
-## [Unreleased]
->>>>>>> 1bfd518 (Added changelog)
 
 ## [0.1.1] - 11/11/2025
 ### Added
