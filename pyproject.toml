@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "loser"
-version = "0.0.1"
+version = "0.1.0"
 description = "Local Search for Reference genome selection"
 readme = "README_PYPI.md"
 requires-python = ">=3.13"
