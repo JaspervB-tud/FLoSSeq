@@ -28,10 +28,11 @@ classifiers = [
 ]
 
 # Uncomment this once GitHub is no longer private
-#[project.urls]
+[project.urls]
 #Homepage = "https://example.com/loser"
-#Repository = "https://github.com/your-org/loser"
+Repository = "https://github.com/JaspervB-tud/LoSeR"
 #Issues = "https://github.com/your-org/loser/issues"
+Changelog = "https://github.com/JaspervB-tud/LoSeR/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 test = ["pytest>=8,<9"]
