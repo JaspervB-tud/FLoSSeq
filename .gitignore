@@ -1,11 +1,18 @@
-src/sandbox.ipynb
-src/sandbox.py
-src/sandbox2.ipynb
-src/sandbox_vectorized.ipynb
-src/sandbox_parallel.ipynb
-src/sandbox*
+*.ipynb
 
 # Ignore Python cache directories
 __pycache__/
 *.pyc
 *.pyo
+*pyd
+*.egg-info/
+.dist/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS/editor
+.DS_Store
+.vscode/
