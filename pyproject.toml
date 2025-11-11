@@ -16,7 +16,7 @@ authors = [
 ]
 dependencies = [
     "numpy>=2.2,<3.0",
-    "scipy>=1.15<2.0"
+    "scipy>=1.15,<2.0"
 ]
 
 classifiers = [
@@ -41,6 +41,16 @@ addopts = "-p no:cacheprovider"
 
 [tool.hatch.build.targets.wheel]
 packages = [{ include = "loser", from = "src" }]
+include = [
+    "src/helper.py",    #ship helper.py so imports keep working
+]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/loser", "README.md", "LICENSE", "tests", "pytest.ini"]
+include = [
+    "src/solution",
+    "src/helper.py", 
+    "README.md", 
+    "LICENSE", 
+    "tests", 
+    "pytest.ini"
+]
