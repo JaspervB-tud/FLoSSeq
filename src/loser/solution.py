@@ -268,7 +268,7 @@ class Solution:
                 objective += cur_min
         # Inter cluster distance costs
         for cluster_1, cluster_2 in itertools.combinations(self.unique_clusters, 2):
-            cur_max = -np.float32(np.inf)
+            cur_max = -np.float64(np.inf)
             cur_pair = (None, None) # indices of the closest selected points of the two clusters
             for point_1 in sorted(list(self.selection_per_cluster[cluster_1])): #this is to ensure consistent ordering
                 for point_2 in sorted(list(self.selection_per_cluster[cluster_2])): #this is to ensure consistent ordering
@@ -1078,6 +1078,14 @@ class Solution:
             check_doubleswap = False
         # Initialize variables for multiprocessing
         run_in_multiprocessing = False
+
+        # Ensure shm handles exist
+        distances_shm = None
+        clusters_shm = None
+        closest_distances_intra_shm = None
+        closest_points_intra_shm = None
+        closest_distances_inter_shm = None
+        closest_points_inter_shm = None
 
         # Multiprocessing
         try:
@@ -2354,6 +2362,14 @@ class SolutionAverage(Solution):
             check_doubleswap = False
         # Initialize variables for multiprocessing
         run_in_multiprocessing = False
+
+        # Ensure shm handles exist
+        distances_shm = None
+        clusters_shm = None
+        closest_distances_intra_shm = None
+        closest_points_intra_shm = None
+        distances_inter_numerator_shm = None
+        distances_inter_denominator_shm = None
 
         # Multiprocessing
         try:
