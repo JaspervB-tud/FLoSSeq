@@ -1,3 +1,7 @@
+"""
+TO-DO:
+    - Potential problem with cluster labels that are not necessarily 0-indexed or consecutive!!
+"""
 import numpy as np
 from scipy.spatial.distance import squareform
 import itertools
