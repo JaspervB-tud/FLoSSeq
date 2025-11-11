@@ -5,3 +5,4 @@
 
 # Example: Importing modules or functions to make them accessible at the package level
 # from .module_name import some_function, SomeClass
+__version__ = "0.0.1"
