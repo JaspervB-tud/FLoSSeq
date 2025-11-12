@@ -71,6 +71,58 @@ def determine_clusters(filepath: str, genomes: dict):
 
     return genomes
 
+def downsample(genomes: dict, max_genomes: int = 2**31, random_state: int = None):
+    """
+    Downsamples genomes within each cluster to a maximum number of genomes.
+
+    Parameters:
+    -----------
+    genomes: dict[str]
+        Dictionary mapping sequence IDs to their corresponding sequences and cluster information.
+    max_genomes: int
+        Maximum number of genomes to retain per cluster. Default is 2^31.
+    random_state: int 
+        Random seed or RandomState for reproducibility. Default is None.
+        NOTE: When random_state is None or an unrecognized type, no shuffling is performed and 
+        the first max_genomes sequences per cluster are retained.
+
+    Returns:
+    --------
+    downsampled_genomes: dict[str]
+        Downsampled dictionary mapping sequence IDs to their corresponding sequences and cluster information.
+    """
+    # Check for random state
+    if isinstance(random_state, int):
+        rng = np.random.RandomState(random_state)
+    elif isinstance(random_state, np.random.RandomState):
+        rng = random_state
+    else:
+        rng = None
+    # First organize in dict (cluster -> list of seq_ids)
+    sequences_per_cluster = {}
+    for seq_id in genomes:
+        cur_cluster = genomes[seq_id]["cluster"]
+        if cur_cluster not in sequences_per_cluster:
+            sequences_per_cluster[cur_cluster] = []
+        sequences_per_cluster[cur_cluster].append(seq_id)
+    # Now downsample
+    downsampled_genomes = {}
+    for cluster in sequences_per_cluster:
+        if len(sequences_per_cluster[cluster]) <= max_genomes: #can simply use all
+            for seq_id in sequences_per_cluster[cluster]:
+                downsampled_genomes[seq_id] = genomes[seq_id]
+        else:
+            if rng is not None:
+                sequences_copy = sequences_per_cluster[cluster][:]
+                rng.shuffle(sequences_copy)
+                for seq_id in sequences_copy[:max_genomes]:
+                    downsampled_genomes[seq_id] = genomes[seq_id]
+            else:
+                for seq_id in sequences_per_cluster[cluster][:max_genomes]:
+                    downsampled_genomes[seq_id] = genomes[seq_id]
+
+    return downsampled_genomes
+
 
 _minhashes = None
 _index2id = None
