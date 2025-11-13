@@ -1204,7 +1204,7 @@ class Solution:
                             np.copyto(shared_closest_points_inter, self.closest_points_inter)
                             
                             event.clear() #reset event for current iteration
-                            results = manager.list #resets results for current iteration
+                            results = manager.list() #resets results for current iteration
 
                             num_solutions_tried = 0
                             # Try moves in batches

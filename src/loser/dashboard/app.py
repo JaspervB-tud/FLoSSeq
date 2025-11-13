@@ -243,6 +243,7 @@ def run_app():
             max_value=1.0,
             value=0.1,
             step=0.0001,
+            format="%.5f",  #show 5 decimal places
         )
         # Set parameters if initialization method is Random
         if init_method == "Random":
@@ -330,10 +331,11 @@ def run_app():
             else:
                 st.write(f"Selected move types: {', '.join(move_order)}")
 
+            st.session_state["starting_objective"] = sol.objective
             if st.button("Run Local Search!", disabled=(len(move_order) == 0)):
                 with st.spinner("Running local search..."):
                     start_time = time.time()
-                    if st.session_state.get("cores", 1) > 1:
+                    if st.session_state.get("cores", 1) == 1:
                         sol.local_search_sp(
                             max_iterations = max_iterations,
                             max_runtime = max_runtime,
@@ -352,11 +354,13 @@ def run_app():
                         )
                     end_time = time.time()
 
-                st.success(f"Local search completed in {end_time-start_time:.2f}s.")
-                st.success(f"**Final objective value:** {sol.objective:.4f}")
-                st.success(f"**Sequences selected:** {np.sum(sol.selection)}/{len(sol.selection)}")
                 st.session_state["solution"] = sol
+                st.session_state["ending_objective"] = sol.objective
                 st.session_state["_solution_optimized"] = True
+                st.success(f"Local search completed in {end_time-start_time:.2f}s.")
+                st.success(f"**Starting objective value:** {st.session_state['starting_objective']:.4f}")
+                st.success(f"**Final objective value:** {st.session_state['ending_objective']:.4f}")
+                st.success(f"**Sequences selected:** {np.sum(sol.selection)}/{len(sol.selection)}")
 
             if st.session_state.get("_solution_optimized", False):
                 st.divider()
@@ -377,12 +381,27 @@ def run_app():
                 included_seq_ids = set(index2seq)
 
                 # Cluster selector
-                cluster_names = sorted(all_clusters.keys())
+                cluster_names = []
+                cluster_mapping = {}
+                for cluster in all_clusters.keys():
+                    sel = 0
+                    tot = 0
+                    for seq_id in all_clusters[cluster]:
+                        if seq_id in included_seq_ids:
+                            tot += 1
+                            if seq_id in selected_seq_ids:
+                                sel += 1
+                    display_name = f"{cluster} (selected: {sel}/{tot})"
+                    cluster_names.append(display_name)
+                    cluster_mapping[display_name] = cluster
+                cluster_names = sorted(cluster_names, key = lambda x: int(x.split(" (selected: ")[1].split("/")[0]), reverse=True) #sort by selected count
+
                 selected_cluster = st.selectbox(
                     "Select cluster to view",
                     cluster_names,
                     key="cluster_view_selector"
                 )
+                selected_cluster = cluster_mapping[selected_cluster] #map back to actual cluster name
 
                 # Get sequences in this cluster
                 cluster_seqs = all_clusters[selected_cluster]
@@ -401,19 +420,24 @@ def run_app():
                     if is_selected:
                         status = "✅ Selected"
                         style = "included_selected"
+                        priority = 0 # Highest priority for sorting
                     elif is_included:
                         status = "⚪ Included (not selected)"
                         style = "included_not_selected"
+                        priority = 1 # Second highest priority
                     else:
                         status = "○ Not included"
                         style = "not_included"
+                        priority = 2 # Lowest priority
                     
                     data.append({
                         "Sequence ID": seq_id,
                         "Status": status,
-                        "_style": style
+                        "_style": style,
+                        "_priority": priority,
                     })
                 
+                data.sort(key = lambda x: x["_priority"])
                 df = pd.DataFrame(data)
                 
                 # Display with custom styling using HTML
@@ -427,13 +451,7 @@ def run_app():
                         return ['opacity: 0.4; color: #888888;'] * 2
                 
                 styled_df = df[["Sequence ID", "Status"]].style.apply(style_row, axis=1)
-                st.dataframe(styled_df, use_container_width=True, height=400)
-
-
-
-            
-
-            
+                st.dataframe(styled_df, width="stretch", height=400)     
 
 def _in_streamlit():
     try:
@@ -444,46 +462,3 @@ def _in_streamlit():
 
 if _in_streamlit():
     run_app()
-
-"""
-Look at this later
-
-selected_cluster = st.selectbox("Select cluster", sorted(cluster_counts.keys()))
-info = cluster_counts[selected_cluster]
-st.subheader(f"Cluster: {selected_cluster}")
-st.write(f"Sequences in cluster: {info['count']}")
-
-# Show example IDs in a scrollable box
-ids_text = "\n".join(info["example_ids"])
-st.text_area("Example IDs", ids_text, height=220, key=f"examples_{selected_cluster}", disabled=True)
-st.code("\n".join(info["example_ids"]), language="text")
-
-# Show detailed sequence selection
-seq_id = st.selectbox("Inspect sequence ID", info["example_ids"])
-seq_record = genomes[seq_id]
-st.write(f"Length: {len(seq_record['sequence'])}")
-if st.checkbox("Show sequence"):
-    st.code(seq_record["sequence"][:500] + ("..." if len(seq_record["sequence"]) > 500 else ""), language="text")
-
-# Optional: pairwise similarity (simple Jaccard via sourmash)
-if st.button("Compute intra-cluster minhash similarity (subset)"):
-    subset_ids = info["example_ids"]
-    mhs = [genomes[sid]["minhash"] for sid in subset_ids]
-    sims = []
-    for i in range(len(mhs)):
-        row = []
-        for j in range(len(mhs)):
-            if i == j:
-                row.append(1.0)
-            else:
-                row.append(mhs[i].similarity(mhs[j]))
-        sims.append(row)
-    st.write("Similarity matrix (example IDs order):")
-    st.dataframe(sims)
-
-# Placeholder for integrating Solution
-if st.button("Initialize Solution (demo)"):
-    from ..solution import Solution
-    sol = Solution()  # adapt to required constructor
-    st.success("Solution object created")
-"""
