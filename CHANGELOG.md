@@ -2,10 +2,12 @@
 All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
 
-## [Unreleased]
+## [0.1.2] - 17/11/2025
 - Included dashboarding
+    - Functional, but very minimal and should not be used on large instances right now.
 - Changed doubleswap behaviour
-    - Instead of removing after non-occurrences, now drop doubleswaps after an iteration has spent X seconds, and re-adds them after iteration finishes (assuming that search does not terminate)
+    - No longer remove after X non-occurrences in a window of Y moves
+    - Removes doubleswap (if enabled) after an iteration has spent X seconds, re-adding next iteration.
 
 ## [0.1.1] - 11/11/2025
 ### Added
