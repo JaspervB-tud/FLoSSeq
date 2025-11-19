@@ -2,10 +2,9 @@
 All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
 
-## [0.1.2] - 17/11/2025
+## [0.1.3] - 19/11/2025
 ### Added
-- Included dashboarding
-    - Functional, but very minimal and should not be used on large instances right now.
+- Included basic dashboarding
 
 ### Changed
 - Changed doubleswap behaviour

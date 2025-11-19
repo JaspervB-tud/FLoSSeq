@@ -756,7 +756,7 @@ class Solution:
     def local_search_sp(self,
                         max_iterations: int = 10_000, max_runtime: float = np.inf,
                         random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
-                        dynamically_check: bool = False, max_move_queue_size: int = 1000, min_doubleswaps: int = 1, start_p: float = 0.25, decay_rate: float = 0.01,
+                        doubleswap_time_threshold: float = 1.0,
                         logging: bool = False, logging_frequency: int = 500,
                         ):
         """
@@ -788,24 +788,12 @@ class Solution:
                 - "remove"
             NOTE: by leaving out a move type, it will not be
             considered in the local search.
-        dynamically_check: bool
-            If True, doubleswaps will be dynamically checked based on the recent moves,
-            and will be omitted if not performed frequently enough.
-            NOTE: If set to false, doubleswaps will always be checked
-            and all moves are assigned equal probability.
-        max_move_queue_size: int
-            The maximum number of moves to keep track of in the recent moves queue.
-        min_doubleswaps: int
-            The minimum number of doubleswaps in the last max_move_queue_size moves
-            before doubleswaps are omitted.
-        start_p: float
-            The starting probability for testing a doubleswap move.
-            NOTE: This probability should be larger than 1/4 to ensure that
-            doubleswaps are tested enough to conclude that they can be
-            omitted.
-        decay_rate: float
-            The rate at which the probability for testing a doubleswap move decays.
-            NOTE: This should be a small positive number, e.g. 0.01.
+        doubleswap_time_threshold: float
+            The time threshold in seconds after which doubleswaps will no
+            longer be considered in the local search.
+            NOTE: this is on a per-iteration basis, so if an iteration
+            takes longer than this threshold, doubleswaps will be
+            skipped in current iteration, but re-added for the next iteration.
         logging: bool
             If True, information about the local search will be printed.
         logging_frequency: int
@@ -835,16 +823,8 @@ class Solution:
             valid_moves = {"add", "swap", "doubleswap", "remove"}
             if len(set(move_order) - valid_moves) > 0:
                 raise ValueError("move_order must contain only the following move types: add, swap, doubleswap, remove.")
-        if not isinstance(dynamically_check, bool):
-            raise ValueError("dynamically_check must be a boolean value.")
-        if not isinstance(max_move_queue_size, int) or max_move_queue_size < 1:
-            raise ValueError("max_move_queue_size must be a positive integer.")
-        if not isinstance(min_doubleswaps, int) or min_doubleswaps < 0:
-            raise ValueError("min_doubleswaps must be a non-negative integer.")
-        if not isinstance(start_p, float) or not (0 < start_p <= 1):
-            raise ValueError("start_p must be a float between 0 (exclusive) and 1 (inclusive).")
-        if not isinstance(decay_rate, float) or decay_rate < 0:
-            raise ValueError("decay_rate must be a non-negative float.")
+        if not isinstance(doubleswap_time_threshold, (int, float)) or doubleswap_time_threshold <= 0:
+            raise ValueError("doubleswap_time_threshold must be a positive number.")
         if not isinstance(logging, bool):
             raise ValueError("logging must be a boolean value.")
         if not isinstance(logging_frequency, int) or logging_frequency < 1:
@@ -857,36 +837,42 @@ class Solution:
         time_per_iteration = []
         objectives = []
         solution_changed = False
-        # Initialize variables for dynamically checking doubleswaps
-        if dynamically_check:
-            recent_moves = deque(maxlen=max_move_queue_size)
-            check_doubleswap = True
-        else:
-            check_doubleswap = False
 
         start_time = time.time()
         while iteration < max_iterations:
             current_iteration_time = time.time()
             objectives.append(self.objective)
             solution_changed = False
-            if dynamically_check:
-                move_generator = self.generate_moves_biased(
-                    iteration=iteration,
-                    random_move_order=random_move_order,
-                    random_index_order=random_index_order,
-                    order=move_order,
-                    decay_rate=decay_rate,
-                    start_p=start_p
-                )
-            else:
-                move_generator = self.generate_moves(
-                    random_move_order=random_move_order,
-                    random_index_order=random_index_order,
-                    order=move_order
-                )
+
+            # Create move generators for every movetype so doubleswaps can be removed if needed
+            move_generator = {}
+            for move_type in move_order:
+                if move_type == "add":
+                    move_generator["add"] = self.generate_indices_add(random=random_index_order)
+                elif move_type == "swap":
+                    move_generator["swap"] = self.generate_indices_swap(number_to_add=1, random=random_index_order)
+                elif move_type == "doubleswap":
+                    move_generator["doubleswap"] = self.generate_indices_swap(number_to_add=2, random=random_index_order)
+                elif move_type == "remove":
+                    move_generator["remove"] = self.generate_indices_remove(random=random_index_order)
+            active_moves = move_order.copy() #list of move types for this iteration
             
             move_counter = 0
-            for move_type, move_content in move_generator:
+            while active_moves:
+                # Select next move type
+                if random_move_order:
+                    selected_generator = self.random_state.choice(active_moves)
+                else:
+                    selected_generator = active_moves[0]
+                # Get next move from generator
+                try:
+                    move_content = next(move_generator[selected_generator])
+                    move_type = selected_generator
+                except StopIteration: #clear move from generator if no more moves are available
+                    active_moves.remove(selected_generator)
+                    del move_generator[selected_generator]
+                    continue
+                
                 move_counter += 1
                 if move_type == "add":
                     idx_to_add = move_content
@@ -918,6 +904,13 @@ class Solution:
                         if logging:
                             print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
                         return time_per_iteration, objectives
+                    # Check if doubleswaps should be removed
+                    if time.time() - current_iteration_time > doubleswap_time_threshold and "doubleswap" in active_moves:
+                        active_moves.remove("doubleswap")
+                        del move_generator["doubleswap"]
+                        if logging:
+                            print(f"Iteration {iteration}: Removed doubleswap moves due to time threshold exceeded ({time.time() - current_iteration_time:.2f} seconds).", flush=True)
+                        
 
             time_per_iteration.append(time.time() - current_iteration_time)
             if solution_changed: # If improvement is found, update solution
@@ -929,17 +922,6 @@ class Solution:
                     if logging:
                         print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
                     return time_per_iteration, objectives
-                # Check if doubleswaps should be removed
-                if check_doubleswap and dynamically_check:
-                    recent_moves.append(move_type)
-                    if len(recent_moves) >= max_move_queue_size:
-                        num_doubleswaps = sum(1 for move in recent_moves if move == "doubleswap")
-                        if num_doubleswaps < min_doubleswaps:
-                            check_doubleswap = False
-                            del recent_moves
-                            move_order = [move for move in move_order if move != "doubleswap"]
-                            if logging:
-                                print(f"Disabled doubleswap moves after {iteration} iterations due to insufficient doubleswaps in the last {max_move_queue_size} moves.", flush=True)
             else:
                 break
 
@@ -1003,24 +985,12 @@ class Solution:
         runtime_switch: float
             Threshold in seconds for switching between single-core and multi-core 
             execution.
-        dynamically_check: bool
-            If True, doubleswaps will be dynamically checked based on the recent moves,
-            and will be omitted if not performed frequently enough.
-            NOTE: If set to false, doubleswaps will always be checked
-            and all moves are assigned equal probability.
-        max_move_queue_size: int
-            The maximum number of moves to keep track of in the recent moves queue.
-        min_doubleswaps: int
-            The minimum number of doubleswaps in the last max_move_queue_size moves
-            before doubleswaps are omitted.
-        start_p: float
-            The starting probability for testing a doubleswap move.
-            NOTE: This probability should be larger than 1/4 to ensure that
-            doubleswaps are test enough to conclude that they can be
-            omitted.
-        decay_rate: float
-            The rate at which the probability for testing a doubleswap move decays.
-            NOTE: This should be a small positive number, e.g. 0.01.
+        doubleswap_time_threshold: float
+            The time threshold in seconds after which doubleswaps will no
+            longer be considered in the local search.
+            NOTE: this is on a per-iteration basis, so if an iteration
+            takes longer than this threshold, doubleswaps will be
+            skipped in current iteration, but re-added for the next iteration.
         logging: bool
             If True, information about the local search will be printed.
         logging_frequency: int
@@ -1052,16 +1022,8 @@ class Solution:
             valid_moves = {"add", "swap", "doubleswap", "remove"}
             if len(set(move_order) - valid_moves) > 0:
                 raise ValueError("move_order must contain only the following move types: add, swap, doubleswap, remove.")
-        if not isinstance(dynamically_check, bool):
-            raise ValueError("dynamically_check must be a boolean value.")
-        if not isinstance(max_move_queue_size, int) or max_move_queue_size < 1:
-            raise ValueError("max_move_queue_size must be a positive integer.")
-        if not isinstance(min_doubleswaps, int) or min_doubleswaps < 0:
-            raise ValueError("min_doubleswaps must be a non-negative integer.")
-        if not isinstance(start_p, float) or not (0 < start_p <= 1):
-            raise ValueError("start_p must be a float between 0 (exclusive) and 1 (inclusive).")
-        if not isinstance(decay_rate, float) or decay_rate < 0:
-            raise ValueError("decay_rate must be a non-negative float.")
+        if not isinstance(doubleswap_time_threshold, (int, float)) or doubleswap_time_threshold <= 0:
+            raise ValueError("doubleswap_time_threshold must be a positive number.")
         if not isinstance(logging, bool):
             raise ValueError("logging must be a boolean value.")
         if not isinstance(logging_frequency, int) or logging_frequency < 1:
@@ -1074,12 +1036,6 @@ class Solution:
         time_per_iteration = []
         objectives = []
         solution_changed = False
-        # Initialize variables for dynamically checking doubleswaps
-        if dynamically_check:
-            recent_moves = deque(maxlen=max_move_queue_size)
-            check_doubleswap = True
-        else:
-            check_doubleswap = False
         # Initialize variables for multiprocessing
         run_in_multiprocessing = False
 
@@ -1201,6 +1157,12 @@ class Solution:
                                     if logging:
                                         print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
                                     return time_per_iteration, objectives
+                                # Check if doubleswaps should be removed
+                                if time.time() - current_iteration_time > doubleswap_time_threshold and "doubleswap" in active_moves:
+                                    active_moves.remove("doubleswap")
+                                    del move_generator["doubleswap"]
+                                    if logging:
+                                        print(f"Iteration {iteration}: Removed doubleswap moves due to time threshold exceeded ({time.time() - current_iteration_time:.2f} seconds).", flush=True)
                                 # Check if current iteration should switch to multiprocessing
                                 if time.time() - current_iteration_time > runtime_switch:
                                     if logging:
@@ -1226,15 +1188,35 @@ class Solution:
                                 cur_batch_time = time.time()
                                 for _ in range(max_batches): #fill list with up to max_batches batches
                                     batch = []
+
+                                    # Check if we should exclude doubleswaps before creating new batch
+                                    if "doubleswap" in active_moves:
+                                        if time.time() - current_iteration_time > doubleswap_time_threshold:
+                                            active_moves.remove("doubleswap")
+                                            del move_generator["doubleswap"]
+                                            if logging:
+                                                print(f"Iteration {iteration}: Disabled doubleswap moves due to time threshold exceeded ({time.time() - current_iteration_time:.2f} seconds).", flush=True)
                                     try:
                                         for _ in range(batch_size):
-                                            move_type, move_content = next(move_generator)
-                                            batch.append((move_type, move_content))
+                                            if not active_moves: #if not enough moves left, break
+                                                break
+                                                
+                                            # Select a move type
+                                            if random_move_order:
+                                                selected_generator = self.random_state.choice(active_moves)
+                                            else:
+                                                selected_generator = active_moves[0]
+                                            # Get next move from generator
+                                            try:
+                                                move_content = next(move_generator[selected_generator])
+                                                move_type = selected_generator
+                                                batch.append((move_type, move_content))
+                                            except StopIteration: #clear move from generator if no more moves are available
+                                                active_moves.remove(selected_generator)
+                                                del move_generator[selected_generator]
+
                                     except StopIteration:
-                                        if len(batch) > 0:
-                                            batches.append(batch)
-                                            num_this_loop += len(batch)
-                                        break
+                                        pass
                                     if len(batch) > 0:
                                         batches.append(batch)
                                         num_this_loop += len(batch)
@@ -1291,18 +1273,6 @@ class Solution:
                                 if logging:
                                     print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
                                 return time_per_iteration, objectives
-                            # Check if doubleswaps should be removed
-                            if check_doubleswap and dynamically_check:
-                                recent_moves.append(move_type)
-                                if len(recent_moves) == max_move_queue_size:
-                                    num_doubleswaps = sum(1 for move in recent_moves if move == "doubleswap")
-                                    if num_doubleswaps < min_doubleswaps:
-                                        check_doubleswap = False
-                                        del recent_moves
-                                        move_order = [move for move in move_order if move != "doubleswap"]
-                                        if logging:
-                                            print(f"Disabled doubleswap moves after {iteration} iterations due to insufficient doubleswaps in the last {max_move_queue_size} moves.", flush=True)
-
                         else:
                             break
                                 
@@ -2309,24 +2279,12 @@ class SolutionAverage(Solution):
         runtime_switch: float
             Threshold in seconds for switching between single-core and multi-core 
             execution.
-        dynamically_check: bool
-            If True, doubleswaps will be dynamically checked based on the recent moves,
-            and will be omitted if not performed frequently enough.
-            NOTE: If set to false, doubleswaps will always be checked
-            and all moves are assigned equal probability.
-        max_move_queue_size: int
-            The maximum number of moves to keep track of in the recent moves queue.
-        min_doubleswaps: int
-            The minimum number of doubleswaps in the last max_move_queue_size moves
-            before doubleswaps are omitted.
-        start_p: float
-            The starting probability for testing a doubleswap move.
-            NOTE: This probability should be larger than 1/4 to ensure that
-            doubleswaps are test enough to conclude that they can be
-            omitted.
-        decay_rate: float
-            The rate at which the probability for testing a doubleswap move decays.
-            NOTE: This should be a small positive number, e.g. 0.01.
+        doubleswap_time_threshold: float
+            The time threshold in seconds after which doubleswaps will no
+            longer be considered in the local search.
+            NOTE: this is on a per-iteration basis, so if an iteration
+            takes longer than this threshold, doubleswaps will be
+            skipped in current iteration, but re-added for the next iteration.
         logging: bool
             If True, information about the local search will be printed.
         logging_frequency: int
@@ -2358,16 +2316,8 @@ class SolutionAverage(Solution):
             valid_moves = {"add", "swap", "doubleswap", "remove"}
             if len(set(move_order) - valid_moves) > 0:
                 raise ValueError("move_order must contain only the following move types: add, swap, doubleswap, remove.")
-        if not isinstance(dynamically_check, bool):
-            raise ValueError("dynamically_check must be a boolean value.")
-        if not isinstance(max_move_queue_size, int) or max_move_queue_size < 1:
-            raise ValueError("max_move_queue_size must be a positive integer.")
-        if not isinstance(min_doubleswaps, int) or min_doubleswaps < 0:
-            raise ValueError("min_doubleswaps must be a non-negative integer.")
-        if not isinstance(start_p, float) or not (0 < start_p <= 1):
-            raise ValueError("start_p must be a float between 0 (exclusive) and 1 (inclusive).")
-        if not isinstance(decay_rate, float) or decay_rate < 0:
-            raise ValueError("decay_rate must be a non-negative float.")
+        if not isinstance(doubleswap_time_threshold, (int, float)) or doubleswap_time_threshold <= 0:
+            raise ValueError("doubleswap_time_threshold must be a positive number.")
         if not isinstance(logging, bool):
             raise ValueError("logging must be a boolean value.")
         if not isinstance(logging_frequency, int) or logging_frequency < 1:
@@ -2380,12 +2330,6 @@ class SolutionAverage(Solution):
         time_per_iteration = []
         objectives = []
         solution_changed = False
-        # Initialize variables for dynamically checking doubleswaps
-        if dynamically_check:
-            recent_moves = deque(maxlen=max_move_queue_size)
-            check_doubleswap = True
-        else:
-            check_doubleswap = False
         # Initialize variables for multiprocessing
         run_in_multiprocessing = False
 
@@ -2446,24 +2390,36 @@ class SolutionAverage(Solution):
                         objectives.append(self.objective)
                         solution_changed = False
                         run_in_multiprocessing = False
-                        if dynamically_check:
-                            move_generator = self.generate_moves_biased(
-                                iteration=iteration, 
-                                random_move_order=random_move_order, 
-                                random_index_order=random_index_order, 
-                                order=move_order,
-                                decay_rate=decay_rate, 
-                                start_p=start_p
-                            )
-                        else:
-                            move_generator = self.generate_moves(
-                                random_move_order=random_move_order, 
-                                random_index_order=random_index_order, 
-                                order=move_order
-                            )
+                        
+                        # Create move generators for every movetype so doubleswaps can be removed if needed
+                        move_generator = {}
+                        for move_type in move_order:
+                            if move_type == "add":
+                                move_generator["add"] = self.generate_indices_add(random=random_index_order)
+                            elif move_type == "swap":
+                                move_generator["swap"] = self.generate_indices_swap(number_to_add=1, random=random_index_order)
+                            elif move_type == "doubleswap":
+                                move_generator["doubleswap"] = self.generate_indices_swap(number_to_add=2, random=random_index_order)
+                            elif move_type == "remove":
+                                move_generator["remove"] = self.generate_indices_remove(random=random_index_order)
+                        active_moves = move_order.copy() #list of move types for this iteration
 
                         move_counter = 0
-                        for move_type, move_content in move_generator:
+                        while active_moves and not run_in_multiprocessing:
+                            # Select next move type
+                            if random_move_order:
+                                selected_generator = self.random_state.choice(active_moves)
+                            else:
+                                selected_generator = active_moves[0]
+                            # Get next move from generator
+                            try:
+                                move_content = next(move_generator[selected_generator])
+                                move_type = selected_generator
+                            except StopIteration: #clear move from generator if no more moves are available
+                                active_moves.remove(selected_generator)
+                                del move_generator[selected_generator]
+                                continue
+
                             move_counter += 1
                             if move_type == "add":
                                 idx_to_add = move_content
@@ -2495,6 +2451,12 @@ class SolutionAverage(Solution):
                                     if logging:
                                         print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
                                     return time_per_iteration, objectives
+                                # Check if doubleswaps should be removed
+                                if time.time() - current_iteration_time > doubleswap_time_threshold and "doubleswap" in active_moves:
+                                    active_moves.remove("doubleswap")
+                                    del move_generator["doubleswap"]
+                                    if logging:
+                                        print(f"Iteration {iteration}: Removed doubleswap moves due to time threshold exceeded ({time.time() - current_iteration_time:.2f} seconds).", flush=True)
                                 # Check if current iteration should switch to multiprocessing
                                 if time.time() - current_iteration_time > runtime_switch:
                                     if logging:
@@ -2520,15 +2482,35 @@ class SolutionAverage(Solution):
                                 cur_batch_time = time.time()
                                 for _ in range(max_batches): #fill list with up to max_batches batches
                                     batch = []
+
+                                    # Check if we should exclude doubleswaps before creating new batch
+                                    if "doubleswap" in active_moves:
+                                        if time.time() - current_iteration_time > doubleswap_time_threshold:
+                                            active_moves.remove("doubleswap")
+                                            del move_generator["doubleswap"]
+                                            if logging:
+                                                print(f"Iteration {iteration}: Disabled doubleswap moves due to time threshold exceeded ({time.time() - current_iteration_time:.2f} seconds).", flush=True)
                                     try:
                                         for _ in range(batch_size):
-                                            move_type, move_content = next(move_generator)
-                                            batch.append((move_type, move_content))
+                                            if not active_moves: #if not enough moves left, break
+                                                break
+
+                                            # Select next move type
+                                            if random_move_order:
+                                                selected_generator = self.random_state.choice(active_moves)
+                                            else:
+                                                selected_generator = active_moves[0]
+                                            # Get next move from generator
+                                            try:
+                                                move_content = next(move_generator[selected_generator])
+                                                move_type = selected_generator
+                                                batch.append((move_type, move_content))
+                                            except StopIteration: #clear move from generator if no more moves are available
+                                                active_moves.remove(selected_generator)
+                                                del move_generator[selected_generator]
+
                                     except StopIteration:
-                                        if len(batch) > 0:
-                                            batches.append(batch)
-                                            num_this_loop += len(batch)
-                                        break
+                                        pass
                                     if len(batch) > 0:
                                         batches.append(batch)
                                         num_this_loop += len(batch)
@@ -2585,18 +2567,6 @@ class SolutionAverage(Solution):
                                 if logging:
                                     print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
                                 return time_per_iteration, objectives
-                            # Check if doubleswaps should be removed
-                            if check_doubleswap and dynamically_check:
-                                recent_moves.append(move_type)
-                                if len(recent_moves) == max_move_queue_size:
-                                    num_doubleswaps = sum(1 for move in recent_moves if move == "doubleswap")
-                                    if num_doubleswaps < min_doubleswaps:
-                                        check_doubleswap = False
-                                        del recent_moves
-                                        move_order = [move for move in move_order if move != "doubleswap"]
-                                        if logging:
-                                            print(f"Disabled doubleswap moves after {iteration} iterations due to insufficient doubleswaps in the last {max_move_queue_size} moves.", flush=True)
-
                         else:
                             break
                                 
