@@ -341,7 +341,7 @@ def run_app():
                             max_runtime = max_runtime,
                             move_order = move_order,
                             logging = True,
-                            logging_frequency = 200,
+                            logging_frequency = 100,
                             doubleswap_time_threshold = 5.0
                         )
                     else:
@@ -351,7 +351,7 @@ def run_app():
                             num_cores = st.session_state["cores"],
                             move_order = move_order,
                             logging = True,
-                            logging_frequency = 200,
+                            logging_frequency = 100,
                             doubleswap_time_threshold = 5.0
                         )
                     end_time = time.time()
