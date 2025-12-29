@@ -874,7 +874,6 @@ class Solution:
                     del move_generator[selected_generator]
                     continue
 
-                print(move_type, move_content)
                 move_counter += 1
                 if move_type == "add":
                     idx_to_add = move_content
@@ -1400,7 +1399,6 @@ class Solution:
             cluster_order = self.unique_clusters
         for cluster in cluster_order:
             cur_list = list(self.selection_per_cluster[cluster])
-            print(cur_list)
             if len(self.selection_per_cluster[cluster]) > 1:
                 if random:
                     #for idx in self.random_state.permutation(sorted(list(self.selection_per_cluster[cluster]))):
@@ -2412,7 +2410,6 @@ class Solution_test:
                     del move_generator[selected_generator]
                     continue
                 
-                print(move_type, move_content)
                 move_counter += 1
                 if move_type == "add":
                     idx_to_add = move_content
@@ -2541,7 +2538,6 @@ class Solution_test:
             cluster_order = self.unique_clusters
         for cluster in cluster_order:
             cur_list = list(self.iter_selected(cluster))
-            print(cur_list)
             if len(cur_list) > 1:
                 if random:
                     for idx in self.random_state.permutation(cur_list):
@@ -2598,6 +2594,19 @@ class Solution_test:
             except StopIteration:
                 active_generators.remove(selected_generator)
 ###################################################################################
+import multiprocessing as mp
+from queue import Empty
+"""
+Encoding for move types and event handling
+"""
+MOVE_ADD = 0
+MOVE_SWAP = 1
+MOVE_DSWAP = 2
+MOVE_REMOVE = 3
+MOVE_SYNC = 99
+MOVE_STOP = 100
+
+_WORKER_SOL = None
 
 class Solution_shm(Solution):
     """
@@ -2671,11 +2680,13 @@ class Solution_shm(Solution):
         self._shm_handles = {}
         
         # Create shared memory for clusters and populate
+        unique_clusters, inv = np.unique(clusters, return_inverse=True)
         self._create_shm_array("clusters", clusters.shape, np.int64)
-        np.copyto(self.clusters, clusters.astype(dtype=np.int64))
-        unique_clusters = np.unique(clusters)
+        self.clusters[:] = inv.astype(np.int64)
         self._create_shm_array("unique_clusters", unique_clusters.shape, np.int64)
-        np.copyto(self.unique_clusters, unique_clusters.astype(dtype=np.int64))
+        self.unique_clusters[:] = np.arange(unique_clusters.shape[0], dtype=np.int64)
+        self.original_clusters = unique_clusters #store original cluster ids for reference
+        self._create_shm_array("num_selected_per_cluster", (unique_clusters.shape[0],), np.int64) #used to track feasibility of removal moves
         self.num_clusters = unique_clusters.shape[0]
         
         # Calculate condensed distance matrix size
@@ -2732,14 +2743,110 @@ class Solution_shm(Solution):
                 # of all points in the cluster to the closest pointn in the cluster.
             elif cost_per_cluster == 3:
                 cluster_points = np.where(self.clusters == cluster)[0]
-                self.cost_per_cluster[cluster] = np.mean([np.min([get_distance(point, p, self.distances, self.num_points) for p in cluster_points if p != point]) for point in cluster_points])
+                self.cost_per_cluster[cluster] = np.mean([np.min([get_distance(point, p, self.distances, self.num_points) for p in cluster_points if p != point]) for point in cluster_points])      
         
-        # Process initial representation to optimize for comparisons speed
-        self.points_per_cluster = {cluster: set(np.where(self.clusters == cluster)[0]) for cluster in self.unique_clusters}        
-        
-        # Calculate objective (see parent class)
+        # Build CSR representation for clusters
+        self._create_shm_array("cluster_members", (self.num_points,), np.int64)
+        self._create_shm_array("cluster_offsets", (self.unique_clusters.shape[0]+1,), np.int64)
+
+        order = np.argsort(self.clusters)
+        np.copyto( self.cluster_members, order.astype(np.int64, copy=False))
+
+        counts = np.bincount(self.clusters, minlength=self.unique_clusters.shape[0]).astype(np.int64)
+        self.cluster_offsets[1:] = np.cumsum(counts)
+
+        # Calculate objective
+        self._create_shm_array("objective", (1,), np.float64)
         self.calculate_objective()
     
+    @classmethod
+    def attach(cls, shm_prefix: str, num_points: int, num_clusters: int):
+        """
+        Creates a Solution_shm instance by attaching to existing shared memory blocks.
+
+        Parameters:
+        -----------
+        shm_prefix: str
+            The prefix used for the shared memory segments.
+        num_points: int
+            The number of points in the solution.
+        num_clusters: int
+            The number of clusters in the solution.
+
+        Returns:
+        Solution_shm
+            An instance of Solution_shm attached to the existing shared memory.
+        """
+        self = cls.__new__(cls)  # Create an uninitialized instance
+        self.shm_prefix = shm_prefix
+        self.num_points = num_points
+        self.num_clusters = num_clusters
+        self._shm_handles = {}
+
+        def _attach(name: str, shape: tuple, dtype):
+            """
+            Helper function for attaching to a shared memory array.
+            """
+            shm_name = f"{self.shm_prefix}{name}"
+            shm_handle = shm.SharedMemory(create=False, name=shm_name)
+            self._shm_handles[name] = shm_handle
+            arr = np.ndarray(shape, dtype=dtype, buffer=shm_handle.buf)
+            setattr(self, name, arr)
+
+        condensed_size = (num_points * (num_points - 1)) // 2
+
+        # Attach cluster-related arrays
+        _attach("clusters", (num_points,), np.int64)
+        _attach("unique_clusters", (num_clusters,), np.int64)
+        _attach("num_selected_per_cluster", (num_clusters,), np.int64)
+
+        # Attach distances and selection
+        _attach("distances", (condensed_size,), DISTANCE_DTYPE)
+        _attach("selection", (num_points,), bool)
+
+        # Attach auxiliary arrays
+        _attach("cost_per_cluster", (num_clusters,), AUXILIARY_DISTANCE_DTYPE)
+        _attach('closest_distances_intra', (num_points,), AUXILIARY_DISTANCE_DTYPE)
+        _attach('closest_points_intra', (num_points,), np.int32)
+        _attach('closest_distances_inter', (num_clusters, num_clusters), AUXILIARY_DISTANCE_DTYPE)
+        _attach('closest_points_inter', (num_clusters, num_clusters), np.int32)
+
+        # Attach CSR representation
+        _attach("cluster_members", (num_points,), np.int64)
+        _attach("cluster_offsets", (num_clusters + 1,), np.int64)
+
+        # Attach epoch counter
+        _attach("epoch", (1,), np.int64)
+
+        # Attach objective
+        _attach("objective", (1,), np.float64)
+
+        self.num_points = num_points
+        self.num_clusters = num_clusters
+        self.feasible = True  # Default to True
+
+        return self
+        
+    def __eq__(self, other):
+        """
+        Check if two solutions are equal.
+        NOTE: This purely checks if all attributes are equal, excluding the random state.
+        NOTE: This is currently not finished!
+        """
+        if not isinstance(other, Solution_shm):
+            return False
+        return True #TODO: finish implementation
+
+    def determine_feasibility(self):
+        """
+        Determines if the solution stored in this object is feasible.
+        NOTE: A solution is feasible if every cluster has at least one selected point.
+        """
+        uncovered_clusters = set(self.unique_clusters)
+        for point in np.where(self.selection)[0]:
+            uncovered_clusters.discard(self.clusters[point])
+        return len(uncovered_clusters) == 0
+
     def _create_shm_array(self, name: str, shape: tuple, dtype):
         """
         Creates a shared memory array and stores the handle.
@@ -2792,123 +2899,1015 @@ class Solution_shm(Solution):
             except Exception as e:
                 print(f"Error cleaning up shared memory '{name}': {e}")
         self._shm_handles.clear()
-    
+
+    def close_only(self):
+        """
+        Close shared memory resources without unlinking.
+        Useful when multiple processes are using the same shared memory.
+        """
+        for handle in self._shm_handles.values():
+            try:
+                handle.close()
+            except FileNotFoundError:
+                pass  #already closed
+            except Exception as e:
+                print(f"Error closing shared memory: {e}")
+        self._shm_handles.clear()
+
     def __del__(self):
         """Ensure cleanup on deletion."""
         self.cleanup()
-    
-    @classmethod
-    def generate_centroid_solution(cls, distances_func, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, seed=None, shm_prefix: str = None):
+
+    def calculate_objective(self):
         """
-        Generates a Solution_shm object with an initial solution by selecting the centroid for every cluster.
+        Calculates the objective value of the solution, as well as set all the
+        inter and intra cluster distances and points.
+        NOTE: If selection is not feasible, the objective value is set to np.inf
+        and some of the internal attributes will not be set.
+        """
+        # Initialize closest distances and points arrays
+        #INTRA-CLUSTER
+        self.closest_distances_intra.fill(0)
+        self.closest_points_intra[:] = np.arange(self.num_points, dtype=np.int32)
+        #INTER-CLUSTER
+        self.closest_distances_inter.fill(0)
+        self.closest_points_inter.fill(0)
+        """
+        Interpretation of closest_points_inter: given a pair of clusters (cluster1, cluster2),
+        the value at closest_points_inter[cluster1, cluster2] is the index of the point in cluster1 that is closest to any point in cluster2.
+        In principle this thus assumes that the leading index is the "from" cluster and thus yields
+        the point in that cluster that is closest to any point in cluster2 (which can be retrieved from closest_points_inter[cluster2, cluster1]).
+        """
+        # Check feasibility
+        is_feasible = self.determine_feasibility()
+        if not is_feasible:
+            self.feasible = False
+            self.objective[0] = np.float64(np.inf)
+            return self.objective
+        self.feasible = True
+
+        # Calculate objective value
+        objective = 0.0
+
+        self.num_selected_per_cluster.fill(0)
+        # Selection cost
+        for idx in np.flatnonzero(self.selection):
+            objective += self.cost_per_cluster[self.clusters[idx]]
+            self.num_selected_per_cluster[self.clusters[idx]] += 1
+
+        # Intra-cluster distance costs
+        for cluster in self.unique_clusters:
+            for idx in self.iter_unselected(cluster):
+                cur_min = AUXILIARY_DISTANCE_DTYPE(np.inf)
+                cur_idx = None #index of the closest selected point of the same cluster
+                for other_idx in self.iter_selected(cluster):
+                    cur_dist = get_distance(idx, other_idx, self.distances, self.num_points)
+                    if cur_dist < cur_min:
+                        cur_min = cur_dist
+                        cur_idx = other_idx
+                self.closest_distances_intra[idx] = AUXILIARY_DISTANCE_DTYPE(cur_min)
+                self.closest_points_intra[idx] = np.int32(cur_idx)
+                objective += cur_min
+
+        #Inter-cluster distance costs
+        for cluster_1, cluster_2 in itertools.combinations(self.unique_clusters, 2):
+            cur_max = -AUXILIARY_DISTANCE_DTYPE(np.inf)
+            cur_pair = (None, None) #indices of the closest selected points of the two clusters
+            for point_1 in self.iter_selected(cluster_1):
+                for point_2 in self.iter_selected(cluster_2):
+                    cur_dist = 1.0 - get_distance(point_1, point_2, self.distances, self.num_points) #convert to similarity
+                    if cur_dist > cur_max:
+                        cur_max = AUXILIARY_DISTANCE_DTYPE(cur_dist)
+                        cur_pair = (point_1, point_2)
+            self.closest_distances_inter[cluster_1, cluster_2] = cur_max
+            self.closest_distances_inter[cluster_2, cluster_1] = cur_max
+            self.closest_points_inter[cluster_1, cluster_2] = np.int32(cur_pair[0])
+            self.closest_points_inter[cluster_2, cluster_1] = np.int32(cur_pair[1])
+            objective += cur_max
+
+        self.objective[0] = np.float64(objective)
+        return self.objective
+
+    def iter_cluster_members(self, cluster: int):
+        """
+        Generator that yields the indices of points in a given cluster.
         
         Parameters:
         -----------
-        distances_func: callable
-            A function that yields (i, j, distance) tuples.
-        clusters: numpy.ndarray
-            A 1D array where clusters[i] represents the cluster assignment of point i.
-        selection_cost: float
-            The cost associated with selecting a point.
-        cost_per_cluster: int
-            Defines how the cost of selecting a point in each cluster is calculated.
-        seed: int, optional
-            Random seed for reproducibility.
-        shm_prefix: str, optional
-            Prefix for shared memory segment names.
+        cluster: int
+            The cluster for which to yield member indices.
         
-        Returns:
-        --------
-        Solution_shm
-            A solution object initialized with centroids for every cluster.
+        Yields:
+        -------
+        idx: int
+            Indices of points in the specified cluster.
         """
-        unique_clusters = np.unique(clusters)
-        selection = np.zeros(clusters.shape[0], dtype=bool)
-        num_points = clusters.shape[0]
-        
-        # First pass: collect distances to compute centroids
-        temp_distances = {}
-        for i, j, dist in distances_func():
-            temp_distances[(i, j)] = dist
-        
-        # Find centroids for each cluster
-        for cluster in unique_clusters:
-            cluster_points = np.where(clusters == cluster)[0]
-            min_sum = np.inf
-            centroid = cluster_points[0]
-            
-            for point in cluster_points:
-                total_dist = sum(temp_distances.get((min(point, other), max(point, other)), 0) 
-                               for other in cluster_points if other != point)
-                if total_dist < min_sum:
-                    min_sum = total_dist
-                    centroid = point
-            
-            selection[centroid] = True
-        
-        # Create distance function that yields from stored distances
-        def distance_generator():
-            for (i, j), dist in sorted(temp_distances.items()):
-                yield i, j, dist
-        
-        return cls(distance_generator, clusters, selection=selection, selection_cost=selection_cost, 
-                  cost_per_cluster=cost_per_cluster, seed=seed, shm_prefix=shm_prefix)
-    
-    @classmethod
-    def generate_random_solution(cls, distances_func, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, max_fraction=0.1, seed=None, shm_prefix: str = None):
+        cluster_idx = np.where(self.unique_clusters == cluster)[0][0]
+        start = self.cluster_offsets[cluster_idx]
+        end = self.cluster_offsets[cluster_idx + 1]
+        for idx in self.cluster_members[start:end]:
+            yield idx
+
+    def iter_selected(self, cluster: int):
         """
-        Generates a Solution_shm object with an initial solution by randomly selecting points.
+        Generator that yields the indices of selected points in a given cluster.
         
         Parameters:
         -----------
-        distances_func: callable
-            A function that yields (i, j, distance) tuples.
-        clusters: numpy.ndarray
-            A 1D array where clusters[i] represents the cluster assignment of point i.
-        selection_cost: float
-            The cost associated with selecting a point.
-        cost_per_cluster: int
-            Defines how the cost of selecting a point in each cluster is calculated.
-        max_fraction: float
-            The maximum fraction of points to select (0-1].
-        seed: int, optional
-            Random seed for reproducibility.
-        shm_prefix: str, optional
-            Prefix for shared memory segment names.
+        cluster: int
+            The cluster for which to yield selected member indices.
+        
+        Yields:
+        -------
+        idx: int
+            Indices of selected points in the specified cluster.
+        """
+        for idx in self.iter_cluster_members(cluster):
+            if self.selection[idx]:
+                yield idx
+
+    def iter_unselected(self, cluster: int):
+        """
+        Generator that yields the indices of unselected points in a given cluster.
+
+        Parameters:
+        -----------
+        cluster: int
+            The cluster for which to yield unselected member indices.
+
+        Yields:
+        -------
+        idx: int
+            Indices of unselected points in the specified cluster.
+        """
+        for idx in self.iter_cluster_members(cluster):
+            if not self.selection[idx]:
+                yield idx
+
+    def evaluate_add(self, idx_to_add: int, local_search: bool = False, stop_event = None):
+        """
+        Evaluates the effect of adding an unselected point to the solution.
+
+        Parameters:
+        -----------
+        idx_to_add: int
+            The index of the point to be added.
+        local_search: bool
+            If True, the method will return (np.inf, None, None) if the candidate objective
+            is worse than the current objective, allowing for local search to skip unnecessary evaluations.
+            If False, it will always evaluate the addition.
+        stop_event: multiprocessing.Event, optional
+            An optional event that can be used to signal early termination of the evaluation.
+            If the event is set during evaluation, the method will return (np.inf, None, None).
         
         Returns:
         --------
-        Solution_shm
-            A randomly initialized solution object.
+        candidate_objective: float
+            The objective value of the solution after the addition.
+        add_within_cluster: list of tuples
+            The changes to be made within the cluster of the added point.
+            Structure: [(index_to_change, new_closest_point, new_distance)]
+            NOTE: new_closest_point will always be idx_to_add.
+        add_for_other_clusters: list of tuples
+            The changes to be made for other clusters.
+            Structure: [(index_other_cluster, (point_in_this_cluster, point_in_other_cluster), new_distance)]
+            NOTE: point_in_this_cluster will always be idx_to_add.
         """
-        if not (0 < max_fraction <= 1):
-            raise ValueError("max_fraction must be between 0 (exclusive) and 1 (inclusive).")
+        if not self.feasible:
+            raise ValueError("The solution is infeasible, cannot evaluate addition.")
+        if self.selection[idx_to_add]:
+            raise ValueError("The point to add must not be selected.")
         
-        unique_clusters = np.unique(clusters)
-        selection = np.zeros(clusters.shape[0], dtype=bool)
+        # Check early stop event
+        if stop_event is not None and stop_event.is_set():
+            return np.inf, None, None
+
+        # Find current cluster
+        cluster = self.clusters[idx_to_add]
+
+        # Calculate selection cost
+        candidate_objective = self.objective[0] + self.cost_per_cluster[cluster] # cost for adding the point
+
+        # Calculate intra-cluster distances
+        add_within_cluster = [] #this stores changes that have to be made if the objective improves
+        for i, idx in enumerate(self.iter_unselected(cluster)):
+            if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                return np.inf, None, None
+            cur_dist = get_distance(idx, idx_to_add, self.distances, self.num_points) # distance to current point (idx)
+            if cur_dist < self.closest_distances_intra[idx]:
+                candidate_objective += cur_dist - self.closest_distances_intra[idx]
+                add_within_cluster.append((idx, idx_to_add, cur_dist))
+
+        # NOTE: Inter-cluster distances can only increase when adding a point, so when doing local search we can exit here if objective is worse
+        if candidate_objective > self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD and local_search:
+            return np.inf, None, None
+
+        # Calculate inter-cluster distances for other clusters
+        add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
+        for other_cluster in self.unique_clusters:
+            if stop_event is not None and stop_event.is_set():
+                return np.inf, None, None
+            if other_cluster != cluster:
+                cur_max = self.closest_distances_inter[cluster, other_cluster]
+                cur_idx = -1
+                for i, idx in enumerate(self.iter_selected(other_cluster)):
+                    if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                        return np.inf, None, None
+                    cur_similarity = 1 - get_distance(idx, idx_to_add, self.distances, self.num_points) #this is the similarity, if it is more similar then change solution
+                    if cur_similarity > cur_max:
+                        cur_max = cur_similarity
+                        cur_idx = idx
+                if cur_idx > -1:
+                    candidate_objective += cur_max - self.closest_distances_inter[cluster, other_cluster]
+                    add_for_other_clusters.append((other_cluster, (idx_to_add, cur_idx), cur_max))
+
+        return candidate_objective, add_within_cluster, add_for_other_clusters
+
+    def evaluate_swap(self, idxs_to_add, idx_to_remove: int, stop_event = None):
+        """
+        Evaluates the effect of swapping a selected point for a/multiple unselected point(s)
+        in the solution.
+
+        Parameters:
+        -----------
+        idxs_to_add: tuple of int or list of int
+            The index or indices of the point(s) to be added.
+        idx_to_remove: int
+            The index of the point to be removed.
+        stop_event: multiprocessing.Event, optional
+            An optional event that can be used to signal early termination of the evaluation.
+            If the event is set during evaluation, the method will return (np.inf, None, None).
         
-        if isinstance(seed, int):
-            random_state = np.random.RandomState(seed)
+        Returns:
+        --------
+        candidate_objective: float
+            The objective value of the solution after the addition.
+        add_within_cluster: list of tuples
+            The changes to be made within the cluster of the added point.
+            Structure: [(index_to_change, new_closest_point, new_distance)]
+        add_for_other_clusters: list of tuples
+            The changes to be made for other clusters.
+            Structure: [(index_other_cluster, (point_in_this_cluster, point_in_other_cluster), new_distance)]
+        """
+        if not self.feasible:
+            raise ValueError("The solution is infeasible, cannot evaluate addition.")
+        try:
+            num_to_add = len(idxs_to_add)
+        except TypeError: #assumption is that this is an int
+            num_to_add = 1
+            idxs_to_add = [idxs_to_add]
+        for idx in idxs_to_add:
+            if self.selection[idx]:
+                raise ValueError("The points to add must not be selected.")
+        if not self.selection[idx_to_remove]:
+            raise ValueError("The point to remove must be selected.")
+        cluster = self.clusters[idx_to_remove]
+        for idx in idxs_to_add:
+            if self.clusters[idx] != cluster:
+                raise ValueError("All points must be in the same cluster.")
+            
+        # Check early stop event
+        if stop_event is not None and stop_event.is_set():
+            return np.inf, None, None
+            
+        # Generate pool of alternative points to compare to
+        new_selection = set(self.iter_selected(cluster))
+        for idx in idxs_to_add:
+            new_selection.add(idx)
+        new_selection.remove(idx_to_remove)
+        new_nonselection = set(self.iter_unselected(cluster))
+        new_nonselection.add(idx_to_remove)
+
+        # Calculate selection cost
+        candidate_objective = self.objective[0] + (num_to_add - 1) * self.cost_per_cluster[cluster] #cost for swapping points
+
+        # Calculate intra-cluster distances
+        add_within_cluster = [] #this stores changes that have to be made if the objective improves
+        for i, idx in enumerate(new_nonselection):
+            if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                return np.inf, None, None
+            cur_closest_distance = self.closest_distances_intra[idx]
+            cur_closest_point = self.closest_points_intra[idx]
+            if cur_closest_point == idx_to_remove: #if point to be removed is closest for current, find new closest
+                cur_closest_distance = np.inf
+                for other_idx in new_selection:
+                    cur_dist = get_distance(idx, other_idx, self.distances, self.num_points)
+                    if cur_dist < cur_closest_distance:
+                        cur_closest_distance = cur_dist
+                        cur_closest_point = other_idx
+                candidate_objective += cur_closest_distance - self.closest_distances_intra[idx]
+                add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
+            else: #point to be removed is not closest, check if one of newly added points is closer
+                cur_dists = [(get_distance(idx, idx_to_add, self.distances, self.num_points), idx_to_add) for idx_to_add in idxs_to_add]
+                cur_dist, idx_to_add = min(cur_dists, key=lambda x: x[0])
+                if cur_dist < cur_closest_distance:
+                    candidate_objective += cur_dist - cur_closest_distance
+                    add_within_cluster.append((idx, idx_to_add, cur_dist))
+
+        # Calculate inter-cluster distances for all other clusters
+        add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
+        for other_cluster in self.unique_clusters:
+            if stop_event is not None and stop_event.is_set():
+                return np.inf, None, None
+            if other_cluster != cluster:
+                cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
+                cur_closest_point = self.closest_points_inter[cluster, other_cluster]
+                cur_closest_pair = (-1, -1)
+                if cur_closest_point == idx_to_remove: #if point to be removed is closest for current, find new closest
+                    cur_closest_similarity = -np.inf
+                    for i, idx in enumerate(self.iter_selected(other_cluster)):
+                        if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                            return np.inf, None, None
+                        for other_idx in new_selection:
+                            cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
+                            if cur_similarity > cur_closest_similarity:
+                                cur_closest_similarity = cur_similarity
+                                cur_closest_pair = (other_idx, idx)
+                else: #point to be removed is not closest, check if one of newly added points is closer
+                    for i, idx in enumerate(self.iter_selected(other_cluster)):
+                        if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                            return np.inf, None, None
+                        cur_similarities = [(1.0 - get_distance(idx, idx_to_add, self.distances, self.num_points), idx_to_add) for idx_to_add in idxs_to_add]
+                        cur_similarity, idx_to_add = max(cur_similarities, key = lambda x: x[0])
+                        if cur_similarity > cur_closest_similarity:
+                            cur_closest_similarity = cur_similarity
+                            cur_closest_pair = (idx_to_add, idx)
+                if cur_closest_pair[0] > -1:
+                    candidate_objective += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster]
+                    add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
+
+        return candidate_objective, add_within_cluster, add_for_other_clusters
+
+    def evaluate_remove(self, idx_to_remove: int, local_search: bool = False, stop_event = None):
+        """
+        Evaluates the effect of removing a selected point from the solution.
+
+        Parameters:
+        -----------
+        idx_to_remove: int
+            The index of the point to be removed.
+        local_search: bool
+            If True, the method will return (np.inf, None, None) if the candidate objective
+            is worse than the current objective, allowing for local search to skip unnecessary evaluations.
+            If False, it will always evaluate the removal.
+        stop_event: multiprocessing.Event, optional
+            An optional event that can be used to signal early termination of the evaluation.
+            If the event is set during evaluation, the method will return (np.inf, None, None).
+        
+        Returns:
+        --------
+        candidate_objective: float
+            The objective value of the solution after the removal.
+        add_within_cluster: list of tuples
+            The changes to be made within the cluster of the added point.
+            Structure: [(index_to_change, new_closest_point, new_distance)]
+        add_for_other_clusters: list of tuples
+            The changes to be made for other clusters.
+            Structure: [(index_other_cluster, (point_in_this_cluster, point_in_other_cluster), new_distance)]
+        """
+        if not self.feasible:
+            raise ValueError("The solution is infeasible, cannot evaluate removal.")
+        if not self.selection[idx_to_remove]:
+            raise ValueError("The point to remove must be selected.")
+
+        # Check early stop event
+        if stop_event is not None and stop_event.is_set():
+            return np.inf, None, None
+        
+        # Find current cluster
+        cluster = self.clusters[idx_to_remove]
+
+        # Generate pool of alternative points to compare to
+        new_selection = set(self.iter_selected(cluster))
+        new_selection.remove(idx_to_remove)
+        new_nonselection = set(self.iter_unselected(cluster))
+        new_nonselection.add(idx_to_remove)
+
+        # Calculate selection cost
+        candidate_objective = self.objective[0] - self.cost_per_cluster[cluster]
+
+        # Calculate inter-cluster distances for all other clusters
+        # NOTE: Intra-cluster distances can only increase when removing a point, Thus if inter-cluster distances
+        # increase, we can exit early.
+        add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
+        for other_cluster in self.unique_clusters:
+            if other_cluster != cluster:
+                cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
+                cur_closest_point = self.closest_points_inter[cluster, other_cluster]
+                cur_closest_pair = (-1, -1)
+                if cur_closest_point == idx_to_remove:
+                    cur_closest_similarity = -np.inf
+                    for i, idx in enumerate(self.iter_selected(other_cluster)):
+                        if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                            return np.inf, None, None
+                        for other_idx in new_selection:
+                            cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
+                            if cur_similarity > cur_closest_similarity:
+                                cur_closest_similarity = cur_similarity
+                                cur_closest_pair = (other_idx, idx)
+                    candidate_objective += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster]
+                    add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
+        
+        # NOTE: Intra-cluster distances can only increase when removing a point, so when doing local search we can exit here if objective is worse
+        if candidate_objective > self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD and local_search:
+            return np.inf, None, None
+        
+        # Calculate intra-cluster distances
+        add_within_cluster = [] #this stores changes that have to be made if the objective improves
+        for i, idx in enumerate(new_nonselection):
+            if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                return np.inf, None, None
+            cur_closest_point = self.closest_points_intra[idx]
+            if cur_closest_point == idx_to_remove:
+                cur_closest_distance = np.inf
+                for j, other_idx in enumerate(new_selection):
+                    if stop_event is not None and (j & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                        return np.inf, None, None
+                    if other_idx != idx:
+                        cur_dist = get_distance(idx, other_idx, self.distances, self.num_points)
+                        if cur_dist < cur_closest_distance:
+                            cur_closest_distance = cur_dist
+                            cur_closest_point = other_idx
+                candidate_objective += cur_closest_distance - self.closest_distances_intra[idx]
+                add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
+        
+        return candidate_objective, add_within_cluster, add_for_other_clusters
+
+    def accept_move(self, idxs_to_add: list, idxs_to_remove: list, candidate_objective: float, add_within_cluster: list, add_for_other_clusters: list):
+        """
+        Accepts a move to the solution, where multiple points can be added and removed at once.
+        NOTE: This assumes that the initial solution and the move
+        are feasible and will not check for this.
+
+        PARAMETERS:
+        -----------
+        idxs_to_add: list of int
+            The indices of the points to be added.
+            NOTE: This assumes that all indices to be added are in the same cluster (which should be the same as the indices to remove)!
+        idxs_to_remove: list of int
+            The indices of the points to be removed.
+            NOTE: This assumes that all indices to be removed are in the same cluster (which should be the same as the indices to add)!
+        candidate_objective: float
+            The objective value of the solution after the move.
+        add_within_cluster: list of tuples
+            The changes to be made within the cluster of the added point.
+            Structure: [(index_to_change, new_closest_point, new_distance)]
+        add_for_other_clusters: list of tuples
+            The changes to be made for other clusters.
+            Structure: [(index_other_cluster, (closest_point_this_cluster, closest_point_other_cluster), new_distance)]
+        """
+        found_clusters = set()
+        for idx in idxs_to_add + idxs_to_remove:
+            found_clusters.add(self.clusters[idx])
+        if len(found_clusters) != 1:
+            raise ValueError("All points to add and remove must be in the same cluster.")
+        cluster = found_clusters.pop()
+        # Updating state attributes of this solution object
+        for idx_to_add in idxs_to_add:
+            self.selection[idx_to_add] = True
+            self.num_selected_per_cluster[cluster] += 1
+        for idx_to_remove in idxs_to_remove:
+            self.selection[idx_to_remove] = False
+            self.num_selected_per_cluster[cluster] -= 1
+        # Updating intra-cluster distances and points
+        for idx_to_change, new_closest_point, new_distance in add_within_cluster:
+            self.closest_distances_intra[idx_to_change] = new_distance
+            self.closest_points_intra[idx_to_change] = new_closest_point
+        # Updating inter-cluster distances and points
+        for other_cluster, (closest_point_this_cluster, closest_point_other_cluster), new_distance in add_for_other_clusters:
+            self.closest_distances_inter[cluster, other_cluster] = new_distance
+            self.closest_distances_inter[other_cluster, cluster] = new_distance
+            self.closest_points_inter[cluster, other_cluster] = closest_point_this_cluster
+            self.closest_points_inter[other_cluster, cluster] = closest_point_other_cluster
+
+        self.objective[0] = candidate_objective
+
+    def local_search(self,
+                    num_processes: int = 2,
+                    max_iterations: int = 10_000, max_runtime: float = np.inf,
+                    random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
+                    doubleswap_time_threshold: float = 60.0,
+                    task_queue_size: int = 2000,
+                    logging: bool = False, logging_frequency: int = 500,
+                    ):
+        """
+        Perform local search to find a (local) optimal solution using multiple processes.
+        The core implementation here is that the main process generates candidate moves and
+        distributes them to worker processes for evaluation. When a worker finds an improving move,
+        it sends it back to the main process which then updates the solution and notifies all workers
+        to restart their search from the new solution.
+
+        Parameters:
+        -----------
+        num_processes: int
+            The number of worker processes to use for local search. Default is 2.
+        max_iterations: int
+            The maximum number of iterations to perform. Default is 10,000.
+        max_runtime: float
+            The maximum runtime in seconds for the local search. Default is infinity.
+        random_move_order: bool
+            If True, the order of moves (add, swap, doubleswap,
+            remove) is randomized. Default is True.
+        random_index_order: bool
+            If True, the order of indices for each move type is randomized. Default is True.
+            NOTE: if random_move_order is True, but this is false,
+            all moves of a particular type will be exhausted before moving to the next type,
+            but the order of moves is random.
+        move_order: list of str
+            If provided, this list will be used to determine the order of moves. If random_move_order
+            is True, this list will be shuffled before use.
+            NOTE: this list should only contain the following move types (as strings):
+                - "add"
+                - "swap"
+                - "doubleswap"
+                - "remove"
+            NOTE: by leaving out a move type, it will not be considered in the local search.
+        doubleswap_time_threshold: float
+            The time threshold in seconds after which double swap moves will no longer be considered.
+            Default is 60.0 seconds.
+            NOTE: this is on a per-iteration basis, so if an iteration takes longer than this threshold,
+            doubleswaps will be skipped in current iteration, but re-added for the next iteration.
+        task_queue_size: int
+            The maximum size of the task queue used to distribute evaluation tasks to worker processes.
+            Default is 2000.
+        logging: bool
+            If True, information about the local search will be printed. Default is False.
+        logging_frequency: int
+            If logging is True, information will be printed every logging_frequency iterations. Default is 500.
+
+        Returns:
+        --------
+        time_per_ieration: list of floats
+            The time taken for each iteration.
+            NOTE: this is primarily for logging purposes
+        objectives: list of floats
+            The objective value after each iteration.
+        """
+        # Validate input
+        if not isinstance(num_processes, int) or num_processes < 1:
+            raise ValueError("num_processes must be an integer greater than 0.")
+        if not isinstance(max_iterations, int) or max_iterations < 1:
+            raise ValueError("max_iterations must be a positive integer.")
+        if not isinstance(random_move_order, bool):
+            raise ValueError("random_move_order must be a boolean value.")
+        if not isinstance(random_index_order, bool):
+            raise ValueError("random_index_order must be a boolean value.")
+        if not isinstance(move_order, list):
+            raise ValueError("move_order must be a list of move types.")
         else:
-            random_state = np.random.RandomState()
-        
-        # Ensure at least one point per cluster is selected
-        for cluster in unique_clusters:
-            cluster_points = np.where(clusters == cluster)[0]
-            selected_point = random_state.choice(cluster_points)
-            selection[selected_point] = True
-        
-        # Randomly select additional points
-        num_points = clusters.shape[0]
-        max_selected_points = int(max_fraction * num_points)
-        remaining_points = np.where(~selection)[0]
-        num_additional_points = max(0, max_selected_points - np.sum(selection))
-        if num_additional_points > 0 and len(remaining_points) > 0:
-            additional_points = random_state.choice(remaining_points, size=min(num_additional_points, len(remaining_points)), replace=False)
-            selection[additional_points] = True
-        
-        return cls(distances_func, clusters, selection, selection_cost=selection_cost, 
-                  cost_per_cluster=cost_per_cluster, seed=random_state, shm_prefix=shm_prefix)
+            if len(move_order) == 0:
+                raise ValueError("move_order must contain at least one move type.")
+            valid_moves = {"add", "swap", "doubleswap", "remove"}
+            if len(set(move_order) - valid_moves) > 0:
+                raise ValueError("move_order must contain only the following move types: add, swap, doubleswap, remove.")
+        if not isinstance(doubleswap_time_threshold, (int, float)) or doubleswap_time_threshold <= 0:
+            raise ValueError("doubleswap_time_threshold must be a positive number.")
+        if not isinstance(task_queue_size, int) or task_queue_size < 1:
+            raise ValueError("task_queue_size must be a positive integer.")
+        if not isinstance(logging, bool):
+            raise ValueError("logging must be a boolean value.")
+        if not isinstance(logging_frequency, int) or logging_frequency < 1:
+            raise ValueError("logging_frequency must be a positive integer.")  
+        if not self.feasible:
+            raise ValueError("The solution is infeasible, cannot perform local search.")
+
+        # Create epoch tag
+        self._create_shm_array("epoch", (1,), np.int64)
+        self.epoch[0] = 0
+
+        # Create context variables and main process variables
+        context = mp.get_context("spawn")
+        stop_event = context.Event()
+        task_q = context.Queue(maxsize=task_queue_size)
+        result_q = context.Queue()
+        ack_q = context.Queue()
+
+        # Start worker processes (attach shared memory handles)
+        workers = []
+        for _ in range(num_processes):
+            worker = context.Process(
+                target = _shm_worker_main,
+                args = (
+                    self.shm_prefix,
+                    self.num_points,
+                    self.num_clusters,
+                    task_q,
+                    result_q,
+                    ack_q,
+                    stop_event,
+                ),
+                daemon = True,
+            )
+            worker.start()
+            workers.append(worker)
+
+        def drain_queue(q):
+            """Helper function to drain a queue."""
+            try:
+                while True:
+                    q.get_nowait()
+            except Exception:
+                return
+
+        # Main local search loop
+        try:
+            iteration = 0
+            time_per_iteration = []
+            objectives = []
+            solution_changed = False
+
+            start_time = time.time()
+            while iteration < max_iterations:
+                if time.time() - start_time > max_runtime:
+                    print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
+                    break
+                current_iteration_time = time.time()
+                objectives.append(self.objective[0])
+                solution_changed = False
+                stop_event.clear()
+                drain_queue(result_q)
+
+
+                # Create move generators for every movetype so doubleswaps can be removed if needed
+                move_generator = {}
+                for move_type in move_order:
+                    if move_type == "add":
+                        move_generator["add"] = self.generate_indices_add(random=random_index_order)
+                    elif move_type == "swap":
+                        move_generator["swap"] = self.generate_indices_swap_exp(number_to_add=1, random=random_index_order)
+                    elif move_type == "doubleswap":
+                        move_generator["doubleswap"] = self.generate_indices_swap_exp(number_to_add=2, random=random_index_order)
+                    elif move_type == "remove":
+                        move_generator["remove"] = self.generate_indices_remove(random=random_index_order)
+                active_moves = move_order.copy() #list of move types for this iteration
+
+                def next_task():
+                    """
+                    Helper function to get the next task from the move generators.
+                    """
+                    while active_moves:
+                        if (time.time() - current_iteration_time) > doubleswap_time_threshold:
+                            if "doubleswap" in active_moves:
+                                print(f"Iteration {iteration}: Removed doubleswap moves due to time threshold exceeded ({time.time() - current_iteration_time:.2f} seconds).", flush=True)
+                                active_moves.remove("doubleswap")
+                                if not active_moves:
+                                    return None, None
+
+                        if random_move_order:
+                            move_type = self.random_state.choice(active_moves)
+                        else:
+                            move_type = active_moves[0]
+                        try:
+                            move_content = next( move_generator[move_type] )
+                        except StopIteration: #clear move from generator if no more moves are available
+                            active_moves.remove(move_type)
+                            del move_generator[move_type]
+                            continue
+
+                        if move_type == "add":
+                            return MOVE_ADD, move_content
+                        elif move_type == "swap":
+                            return MOVE_SWAP, move_content
+                        elif move_type == "doubleswap":
+                            return MOVE_DSWAP, move_content
+                        elif move_type == "remove":
+                            return MOVE_REMOVE, move_content
+                        
+                    return None, None
+
+                # Distribute tasks to workers and watch for first improving move
+                while not solution_changed:
+                    if time.time() - current_iteration_time > max_runtime:
+                        break
+
+                    # Check if workers have found improvements
+                    try:
+                        epoch, move_type, move_data, candidate_objective = result_q.get_nowait()
+                        if epoch == self.epoch[0]: #only accept move if epoch matches
+                            solution_changed = True
+                            break #if move was submitted to result_q, break to process it
+                    except Exception:
+                        pass
+
+                    # Distribute tasks to workers
+                    move_code, move_content = next_task()
+                    if move_code is None:
+                        break #no more moves available
+                    # Push task
+                    task_q.put( (int(self.epoch[0]), move_code, move_content) )
+
+                # If solution changed, process the move
+                if solution_changed:
+                    stop_event.set() #notify workers to stop current evaluations
+
+                    # Drain task and result queue
+                    drain_queue(task_q)
+                    drain_queue(result_q)
+                    drain_queue(ack_q)
+
+                    # Acknowledge all workers have stopped
+                    for _ in workers:
+                        task_q.put( (int(self.epoch[0]), MOVE_SYNC, None) ) #send sync signal
+                    for _ in workers:
+                        while True:
+                            a = ack_q.get() #wait for ack which puts current iteration
+                            if a == int(self.epoch[0]):
+                                break
+
+                    # Accept the move by re-evaluating it to get the updates
+                    if move_type == MOVE_ADD:
+                        idx_to_add = move_data
+                        new_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=False)
+                        self.accept_move([idx_to_add], [], new_objective, add_within_cluster, add_for_other_clusters)
+                    elif move_type == MOVE_SWAP:
+                        idxs_to_add, idx_to_remove = move_data
+                        new_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
+                        self.accept_move(idxs_to_add, [idx_to_remove], new_objective, add_within_cluster, add_for_other_clusters)
+                    elif move_type == MOVE_DSWAP:
+                        idxs_to_add, idx_to_remove = move_data
+                        new_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
+                        self.accept_move(idxs_to_add, [idx_to_remove], new_objective, add_within_cluster, add_for_other_clusters)
+                    elif move_type == MOVE_REMOVE:
+                        idx_to_remove = move_data
+                        new_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=False)
+                        self.accept_move([], [idx_to_remove], new_objective, add_within_cluster, add_for_other_clusters)
+
+                    time_per_iteration.append(time.time() - current_iteration_time)
+                    iteration += 1
+                    self.epoch[0] += 1
+                    if logging and (iteration % logging_frequency == 0):
+                        print(f"Iteration {iteration}: Objective = {self.objective[0]:.10f}", flush=True)
+                        print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
+                # Solution did not change -> exit local search
+                else:
+                    break
+
+            return time_per_iteration, objectives
+        finally:
+            # Terminate workers
+            stop_event.set()
+            drain_queue(task_q)
+            for _ in workers:
+                try:
+                    task_q.put( (int(self.epoch[0]), MOVE_STOP, None) )
+                except Exception:
+                    pass
+
+            for worker in workers:
+                worker.join(timeout=2.0)
+
+    def generate_indices_add(self, random: bool = False):
+        """
+        Generates indices of points that can be added to the solution.
+
+        Parameters:
+        -----------
+        random: bool
+            If True, the order of indices is randomized. Default is False.
+            NOTE: this uses the random state stored in the Solution object.
+
+        Yields:
+        -------
+        idx: int
+            Indices of points that can be added to the solution.
+        """
+        indices = np.flatnonzero(~self.selection)
+        if random:
+            yield from self.random_state.permutation(indices)
+        else:
+            yield from indices
+
+    def generate_indices_swap(self, number_to_add: int = 1, random: bool = False):
+        """
+        Generates indices of pairs of points that can be swapped in the solution.
+        NOTE: when running in random mode, we randomly iterate over clusters, and
+        indices in a cluster.
+
+        Parameters:
+        -----------
+        number_to_add: int
+            The number of points to add in the swap operation. Default is 1 (remove 1 point, add 1 point).
+        random: bool
+            If True, the order of indices is randomized. Default is False.
+            NOTE: this uses the random state stored in the Solution object.
+            NOTE: although the cluster order can be randomized, the cluster is exhausted before moving to the next cluster.
+
+        Yields:
+        -------
+        idxs_to_add: list of int
+            Indices of points to add to the solution.
+        idx_to_remove: int
+            Index of point to remove from the solution.
+        """
+        if random:
+            cluster_order = self.random_state.permutation(self.unique_clusters)
+        else:
+            cluster_order = self.unique_clusters
+        for cluster in cluster_order:
+            clusters_mask = self.clusters == cluster
+            selected = np.flatnonzero(clusters_mask & self.selection)
+            unselected = np.flatnonzero(clusters_mask & ~self.selection)
+
+            if random:
+                if selected.size == 0 or unselected.size == 0: #skip permuting if no points to swap
+                    continue
+                selected = self.random_state.permutation(selected)
+                unselected = self.random_state.permutation(unselected)
+
+            for idx_to_remove in selected:
+                if number_to_add == 1:
+                    for idx_to_add in unselected:
+                        yield [idx_to_add], idx_to_remove
+                else:
+                    for indices_to_add in itertools.combinations(unselected, number_to_add):
+                        yield list(indices_to_add), idx_to_remove
+
+    def generate_indices_swap_exp(self, number_to_add: int = 1, random: bool = False):
+        """
+        Test version of generate_indices_swap that stores a generator for every cluster, so that
+        clusters can be exhausted in random order (opposed to exhausting one cluster at a time).
+
+        Parameters:
+        -----------
+        number_to_add: int
+            The number of points to add in the swap operation. Default is 1 (remove 1 point, add 1 point).
+        random: bool
+            If True, the order of indices is randomized. Default is False.
+            NOTE: this uses the random state stored in the Solution object.
+            NOTE: although the cluster order can be randomized, it exhausts all swaps for a given remove index
+            in randomized order.
+
+        Yields:
+        -------
+        idxs_to_add: list of int
+            Indices of points to add to the solution.
+        idx_to_remove: int
+            Index of point to remove from the solution.
+        """            
+        cluster_iterators = {}
+        for cluster in self.unique_clusters:
+            clusters_mask = self.clusters == cluster
+            selected = np.flatnonzero(clusters_mask & self.selection)
+            unselected = np.flatnonzero(clusters_mask & ~self.selection)
+            cluster_iterators[cluster] = self._generate_swaps_in_cluster(selected, unselected, number_to_add, random=random)
+
+        remaining_clusters = list(cluster_iterators.keys())
+        while remaining_clusters:
+            # With random, randomly select a cluster to yield from
+            if random:
+                try:
+                    cur_cluster = self.random_state.choice(remaining_clusters)
+                    yield next( cluster_iterators[cur_cluster] )
+                except StopIteration:
+                    cluster_iterators.pop(cur_cluster)
+                    remaining_clusters.remove(cur_cluster)
+            # In non-random, just go through clusters in order
+            else:
+                cur_cluster = remaining_clusters[0]
+                while True:
+                    try:
+                        yield next( cluster_iterators[cur_cluster] )
+                    except StopIteration:
+                        cluster_iterators.pop(cur_cluster)
+                        remaining_clusters.remove(cur_cluster)
+                        break
+
+    def _generate_swaps_in_cluster(self, selected: np.ndarray, unselected: np.ndarray, number_to_add: int, random: bool = False):
+        """
+        Helper function to generate swaps within a cluster.
+
+        Parameters:
+        -----------
+        selected: numpy.ndarray
+            Indices of selected points in the cluster.
+        unselected: numpy.ndarray
+            Indices of unselected points in the cluster.
+        number_to_add: int
+            The number of points to add in the swap operation.
+
+        Yields:
+        -------
+        idxs_to_add: list of int
+            Indices of points to add to the solution.
+        idx_to_remove: int
+            Index of point to remove from the solution.
+        """
+        if selected.size == 0 or unselected.size == 0: #skip permuting if no points to swap
+            return #empty generator
+
+        if random:
+            selected = self.random_state.permutation(selected)
+            unselected = self.random_state.permutation(unselected)
+
+        for idx_to_remove in selected:
+            if number_to_add == 1:
+                for idx_to_add in unselected:
+                    yield [idx_to_add], idx_to_remove
+            else:
+                for indices_to_add in itertools.combinations(unselected, number_to_add):
+                    yield list(indices_to_add), idx_to_remove
+
+    def generate_indices_remove(self, random: bool = False):
+        """
+        Generates indices of points that can be removed from the solution.
+
+        Parameters:
+        -----------
+        random: bool
+            If True, the order of indices is randomized. Default is False.
+            NOTE: This uses the random state stored in the Solution object.
+
+        Yields:
+        -------
+        idx: int
+            Indices of points that can be removed from the solution.
+        """
+        indices = np.flatnonzero(self.selection)
+        if random:
+            for idx in self.random_state.permutation(indices):
+                if self.num_selected_per_cluster[self.clusters[idx]] > 1:
+                    yield idx
+        else:
+            for idx in indices:
+                if self.num_selected_per_cluster[self.clusters[idx]] > 1:
+                    yield idx
+
+def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, ack_q, stop_event):
+    """
+    Worker function for multiprocessing evaluations.
+    This function listens for tasks on the task queue, processes them,
+    and puts the results on the result queue.
+
+    Parameters:
+    -----------
+    shm_prefix: str
+        The prefix for shared memory segments.
+    num_points: int
+        The number of points in the dataset.
+    num_clusters: int
+        The number of clusters in the dataset.
+    task_q: multiprocessing.Queue
+        The queue from which to receive tasks.
+    result_q: multiprocessing.Queue
+        The queue to which to send results.
+    ack_q: multiprocessing.Queue
+        The queue to which to send acknowledgments.
+    stop_event: multiprocessing.Event
+        An event that can be used to signal early termination.
+    """
+    global _WORKER_SOL
+    _WORKER_SOL = Solution_shm.attach(shm_prefix, num_points, num_clusters)
+
+    try:
+        while True:
+            epoch, move_code, move_args = task_q.get()
+
+            # Check for termination signal
+            if move_code == MOVE_STOP:
+                break
+
+            # Signal that worker is not inside evaluation
+            if move_code == MOVE_SYNC:
+                ack_q.put(epoch)
+                continue
+
+            # Terminate if stop event is set
+            if stop_event.is_set():
+                continue
+
+            sol = _WORKER_SOL
+
+            if sol.epoch is not None and epoch != sol.epoch[0]:
+                # Solution has changed, skip current evaluation
+                continue
+
+            # Process move
+            cur_obj = sol.objective[0]
+            if move_code == MOVE_ADD:
+                idx_to_add = move_args
+                candidate_objective, _, _ = sol.evaluate_add(idx_to_add, local_search=True, stop_event=stop_event)
+                if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
+                    # Suppress potentially late publishing of moves from old epochs
+                    if (not stop_event.is_set()) and (sol.epoch is not None) and (epoch == sol.epoch[0]):
+                        result_q.put( (epoch, move_code, idx_to_add, candidate_objective) )
+            elif move_code == MOVE_SWAP or move_code == MOVE_DSWAP:
+                idxs_to_add, idx_to_remove = move_args
+                candidate_objective, _, _ = sol.evaluate_swap(idxs_to_add, idx_to_remove, stop_event=stop_event)
+                if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
+                    # Suppress potentially late publishing of moves from old epochs
+                    if (not stop_event.is_set()) and (sol.epoch is not None) and (epoch == sol.epoch[0]):
+                        result_q.put( (epoch, move_code, (idxs_to_add, idx_to_remove), candidate_objective) )
+            elif move_code == MOVE_REMOVE:
+                idx_to_remove = move_args
+                candidate_objective, _, _ = sol.evaluate_remove(idx_to_remove, local_search=True, stop_event=stop_event)
+                if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
+                    # Suppress potentially late publishing of moves from old epochs
+                    if (not stop_event.is_set()) and (sol.epoch is not None) and (epoch == sol.epoch[0]):
+                        result_q.put( (epoch, move_code, idx_to_remove, candidate_objective) )
+                
+    finally:
+        _WORKER_SOL.close_only()
+###################################################################################
 
 class SolutionAverage(Solution):
     """
@@ -5046,9 +6045,9 @@ def main():
                 distances[idx+j, idx] = res[j]
         print(f"Pairwise distances computed in {time.time() - start:.4f}s.", flush=True)
 
-    MAX_ITERATIONS = 5
-    LOGGING_FREQUENCY = 1
-    SEED = 42
+    MAX_ITERATIONS = 950
+    LOGGING_FREQUENCY = 100
+    SEED = 69
     MAX_FRACTION = 0.1
 
     S = Solution.generate_random_solution(
@@ -5063,16 +6062,18 @@ def main():
     start = time.time()
     time_per_iteration, objectives = S.local_search_sp(
         max_iterations=MAX_ITERATIONS,
-        max_runtime=np.inf,
-        doubleswap_time_threshold=10.0,
+        max_runtime=600,
+        doubleswap_time_threshold=30.0,
         logging=LOGGING,
         logging_frequency=LOGGING_FREQUENCY,
-        random_move_order=True, random_index_order=False,
+        random_move_order=True, random_index_order=True,
     )
     end = time.time()
-    print("Local search completed (old).", flush=True)
+    print(f"Local search completed (old). Objective = {objectives[-1]}", flush=True)
+    print(f"Total time elapsed: {end - start}s.", flush=True)
     print(f"Average iteration time: {np.mean(time_per_iteration[-200:])}s (std: {np.std(time_per_iteration[-200:], ddof=1)}s).", flush=True)
     print()
+    """
     S = Solution_test.generate_random_solution(
         distances=distances,
         clusters=clusters,
@@ -5085,15 +6086,41 @@ def main():
     start = time.time()
     time_per_iteration, objectives = S.local_search_sp(
         max_iterations=MAX_ITERATIONS,
-        max_runtime=np.inf,
+        max_runtime=300,
         doubleswap_time_threshold=10.0,
         logging=LOGGING,
         logging_frequency=LOGGING_FREQUENCY,
-        random_move_order=True, random_index_order=False,
+        random_move_order=True, random_index_order=True,
     )
     end = time.time()
     print("Local search completed (new).", flush=True)
     print(f"Average iteration time: {np.mean(time_per_iteration[-200:])}s (std: {np.std(time_per_iteration[-200:], ddof=1)}s).", flush=True)
+    print()
+    """
+    S = Solution_shm.generate_random_solution(
+        distances=distances,
+        clusters=clusters,
+        selection_cost=SELECTION_COST,
+        cost_per_cluster=0,
+        max_fraction=MAX_FRACTION,
+        seed=SEED
+    )
+    print("Object initialized")
+    start = time.time()
+    time_per_iteration, objectives = S.local_search(
+        num_processes = 16,
+        max_iterations=MAX_ITERATIONS,
+        max_runtime=600,
+        doubleswap_time_threshold=60.0,
+        logging=LOGGING,
+        logging_frequency=LOGGING_FREQUENCY,
+        random_move_order=True, random_index_order=True,
+    )
+    end = time.time()
+    print(f"Local search completed (shm). Objective = {objectives[-1]}", flush=True)
+    print(f"Total time elapsed: {end - start}s.", flush=True)
+    print(f"Average iteration time: {np.mean(time_per_iteration[-200:])}s (std: {np.std(time_per_iteration[-200:], ddof=1)}s).", flush=True)
+    print()
 
 
 if __name__ == "__main__":
