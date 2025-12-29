@@ -1,4 +1,5 @@
 *.ipynb
+_*.npy
 
 # Ignore Python cache directories
 __pycache__/
