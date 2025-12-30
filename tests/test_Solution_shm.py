@@ -1,4 +1,4 @@
-from flosseq import solution as solution
+from reset import solution as solution
 from scipy.spatial.distance import squareform
 # Global imports
 import numpy as np
