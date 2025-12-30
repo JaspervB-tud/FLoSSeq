@@ -1,5 +1,5 @@
 import streamlit as st
-from flosseq.dashboard import pipeline
+from reset.dashboard import pipeline
 import numpy as np
 import os
 import subprocess
