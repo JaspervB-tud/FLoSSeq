@@ -2472,61 +2472,10 @@ def get_distance(idx1: int, idx2: int, distances: np.ndarray, num_points: int):
 
 
 ############### EXPERIMENTAL MAIN FUNCTION ###############
-import sourmash
-from Bio import SeqIO
 import time
 from multiprocessing import Pool
 import numpy as np
 import math
-
-def read_genomes():
-    id2index = {}
-    index2id = []
-    lineages = []
-    sequences = {}
-    records = {}
-    sequences_per_lineage = {}
-    base_path = "/tudelft.net/staff-umbrella/refsetopt/SELECTION_PROJECT/SC2_example/GISAID_downloaded-24-05-2025_dates-01-09-2024_31-12-2024"
-    for record in SeqIO.parse(f"{base_path}/sequences.fasta", "fasta"):
-        cur_id = record.id
-        cur_seq = str(record.seq)
-        cur_idx = len(index2id)
-
-        sequences[cur_id] = cur_seq
-        records[cur_id] = record
-        id2index[cur_id] = cur_idx
-        index2id.append(cur_id)
-
-    with open(f"{base_path}/metadata.tsv") as f:
-        id_col = 0
-        lineage_col = 16
-        next(f)
-        for line in f:
-            line = line.strip().split("\t")
-            cur_id = line[id_col]
-            cur_lineage = line[lineage_col]
-
-            if cur_id in id2index:
-                lineages.append(cur_lineage)
-                if cur_lineage not in sequences_per_lineage:
-                    sequences_per_lineage[cur_lineage] = []
-                sequences_per_lineage[cur_lineage].append(cur_id)
-    
-    return sequences, records, lineages, id2index, index2id, sequences_per_lineage
-
-def sketch(input_pair):
-    id, seq = input_pair
-    mh = sourmash.MinHash(n=0, ksize=31, scaled=5, track_abundance=True)
-    mh.add_sequence(seq, force=True)
-    return (id, mh)
-
-def compute_distance_batch(args):
-        idx, index2id, sketches, num_sequences = args
-        res = [idx]
-        for j in range(idx+1, num_sequences):
-            d = sketches[index2id[idx]].similarity(sketches[index2id[j]])
-            res.append(1.0 - d)
-        return res
 
 def main():
     SELECTION_COST = 0.1
@@ -2548,28 +2497,8 @@ def main():
         distances = np.load("_distances.npy")
         print("Loaded precomputed distances.", flush=True)
     except FileNotFoundError:
-        print("Precomputed distances not found, computing from scratch.", flush=True)
-        pairs = [(id, seq) for id, seq in sequences.items()]
-        print("Sketching genomes...", flush=True)
-        start = time.time()
-        with Pool(NUM_CORES) as pool:
-            sketches = pool.map(sketch, pairs)
-        sketches = {id: mh for id, mh in sketches}
-        print(f"Sketching completed in {time.time() - start:.4f}s.", flush=True)
-        distances = np.zeros((len(sequences), len(sequences)), dtype=np.float64)
-
-        indices = list(range(len(sequences)))[:-1]  # final index has no other indices for which to compute distances
-        args_list = [(idx, index2id, sketches, len(sequences)) for idx in indices]
-        print("Computing pairwise distances...", flush=True)
-        start = time.time()
-        with Pool(NUM_CORES) as pool:
-            results = pool.map(compute_distance_batch, args_list)
-        for res in results:
-            idx = res[0]
-            for j in range(1, len(res)):
-                distances[idx, idx+j] = res[j]
-                distances[idx+j, idx] = res[j]
-        print(f"Pairwise distances computed in {time.time() - start:.4f}s.", flush=True)
+        print("Distances file does not exist", flush=True)
+        return
 
     MAX_ITERATIONS = 950
     LOGGING_FREQUENCY = 100
