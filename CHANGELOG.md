@@ -1,7 +1,7 @@
 # Changelog
 All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
-## [0.2.5] - 30/12/2025
+## [0.2.6] - 30/12/2025
 Tool is renamed to **Re**ference genome **Se**lection **T**ool now!
 
 ### Added
