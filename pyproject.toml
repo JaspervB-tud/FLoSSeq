@@ -5,7 +5,7 @@ requires = ["hatchling>=1.18", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "reset"
+name = "reset-bio"
 ##version = "0.1.0" DEPRECATED -> use versioning from VCS
 dynamic = ["version"]
 description = "Reference genome Selection Tool"
