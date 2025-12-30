@@ -1,6 +1,6 @@
 # Solution Module
 
-This repository contains the `solution.py` script, which provides functionality for solving specific computational problems. The script is located in the `src/flosseq/` directory.
+This repository contains the `solution.py` script, which provides functionality for solving specific computational problems. The script is located in the `src/reset/` directory.
 
 ## Features
 

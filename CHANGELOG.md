@@ -1,7 +1,9 @@
 # Changelog
 All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
-## [0.2]
+## [0.2] - 30/12/2025
+Tool is renamed to **Re**ference genome **Se**lection **T**ool now!
+
 ### Added
 - Solution_shm: this is the multiprocessing implementation that fully runs on shared memory
 
@@ -9,6 +11,9 @@ This project attempts to follow Keep a Changelog and Semantic Versioning.
 - Removed multiprocessing implementation for base Solution class
 - Re-implemented move generation for removal and swap. Previously, clusters were exhausted, now a random cluster is selected every move call
 - Removed SolutionAverage
+
+### Not ready yet
+Have not yet updated the dashboarding to account for changes.
 
 ## [0.1.4.4] - 27/11/2025
 Again testing if versioning is correct.

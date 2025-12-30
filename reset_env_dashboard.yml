@@ -1,4 +1,4 @@
-name: flosseq_env_dashboard
+name: reset_env_dashboard
 channels:
   - conda-forge
   - bioconda

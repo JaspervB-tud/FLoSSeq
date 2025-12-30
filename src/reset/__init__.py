@@ -5,9 +5,9 @@
 
 # Example: Importing modules or functions to make them accessible at the package level
 # from .module_name import some_function, SomeClass
-from .solution import Solution, SolutionAverage
+from .solution import Solution, Solution_shm
 from importlib.metadata import version as _pkg_version
 
-__all__ = ["Solution", "SolutionAverage"]
+__all__ = ["Solution", "Solution_shm"]
 
 __version__ = _pkg_version("flosseq")
