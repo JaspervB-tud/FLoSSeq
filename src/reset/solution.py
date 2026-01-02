@@ -14,7 +14,7 @@ import traceback
 
 # This is to define the precision threshold for floating point comparisons
 PRECISION_THRESHOLD = 1e-10
-DISTANCE_DTYPE = np.float32
+DISTANCE_DTYPE = np.float64
 AUXILIARY_DISTANCE_DTYPE = np.float64
 
 # This encodes move types for multiprocessing local search
@@ -31,12 +31,19 @@ _WORKER_SOL = None
 # Single processing solution class (stable)
 class Solution:
     def __init__(self, distances: np.ndarray, clusters: np.ndarray, selection: np.ndarray = None, selection_cost: float = 1.0, cost_per_cluster: int = 0, seed=None):
-        # Assert that distances and clusters have the same number of rows
-        if distances.shape[0] != clusters.shape[0]:
-            raise ValueError("Number of points is different between distances and clusters.")
-        # Assert that distances are in [0,1] (i.e. distances are similarities or dissimilarities)
-        if not np.all((distances >= 0) & (distances <= 1)):
-            raise ValueError("Distances must be in the range [0, 1].")
+        import types
+        # Check if distances is a numpy array or a generator
+        is_generator = isinstance(distances, types.GeneratorType)
+        is_array = isinstance(distances, np.ndarray)
+        if not is_generator and not is_array:
+            raise TypeError("distances must be a generator or a numpy array.")
+        if is_array:
+            # If distances is matrix, assert that distances and clusters have the same number of rows/points
+            if distances.shape[0] != clusters.shape[0]:
+                raise ValueError("Number of points is different between distances and clusters.")
+            # Assert that distances are in [0,1] (i.e. distances are similarities or dissimilarities)
+            if not np.all((distances >= 0) & (distances <= 1)):
+                raise ValueError("Distances must be in the range [0, 1].")
         # If selection is provided, check if it meets criteria
         if selection is not None:
             # Assert that selection has the same number of points as clusters
@@ -58,7 +65,20 @@ class Solution:
 
         # Initialize object attributes
         self.selection = selection.astype(dtype=bool)
-        self.distances = squareform(distances.astype(dtype=DISTANCE_DTYPE))
+        if is_array:
+            flat_distances = squareform(distances.astype(dtype=DISTANCE_DTYPE))
+            self.distances = flat_distances
+        else:
+            num_points = clusters.shape[0]
+            self.distances = np.zeros((num_points * (num_points - 1)) // 2, dtype=DISTANCE_DTYPE)
+            for i, j, dist in distances:
+                if not (0 <= dist <= 1):
+                    raise ValueError(f"Distance at ({i}, {j}) = {dist} is not in range [0, 1].")
+                min_idx = min(i, j)
+                max_idx = max(i, j)
+                idx = get_index(min_idx, max_idx, num_points)
+                self.distances[idx] = dist
+
         self.clusters = clusters.astype(dtype=np.int64)
         self.unique_clusters = np.unique(self.clusters)
         # Cost per cluster based on number of points in each cluster
@@ -88,7 +108,7 @@ class Solution:
                 # of all points in the cluster to the closest point in the cluster.
                 cluster_points = np.where(self.clusters == cluster)[0]
                 self.cost_per_cluster[cluster] = np.mean([np.min(distances[point, cluster_points]) for point in cluster_points])
-        self.num_points = distances.shape[0]
+        self.num_points = clusters.shape[0]
 
         # Process initial representation to optimize for comparisons speed
         self.points_per_cluster = {cluster: set(np.where(self.clusters == cluster)[0]) for cluster in self.unique_clusters} #points in every cluster
@@ -178,10 +198,6 @@ class Solution:
         Solution
             A randomly initialized solution object.
         """
-        if distances.shape[0] != clusters.shape[0]:
-            raise ValueError("Number of points is different between distances and clusters.")
-        if not np.all((distances >= 0) & (distances <= 1)):
-            raise ValueError("Distances must be in the range [0, 1].")
         if not (0 < max_fraction <= 1):
             raise ValueError("max_fraction must be between 0 (exclusive) and 1 (inclusive).")
 
@@ -1123,10 +1139,9 @@ class Solution_shm(Solution):
         
         Parameters:
         -----------
-        distances_func: callable
-            A function that yields (i, j, distance) tuples to populate the distance matrix.
-            This allows streaming distances without creating a full copy in memory.
-            The function should yield condensed distance matrix indices in order.
+        distances: numpy.ndarray or generator
+            Either a 2D distance matrix, OR a generator that yields (i, j, distance) tuples.
+            NOTE: The generator should yield all pairwise distances in condensed format (i.e. i and j are indices).
         clusters: numpy.ndarray
             A 1D array where clusters[i] represents the cluster assignment of point i.
         selection: numpy.ndarray, optional
@@ -1140,11 +1155,14 @@ class Solution_shm(Solution):
         seed: int or np.random.RandomState, optional
             Random seed for reproducibility.
         """
-        # Assert distances is a matrix or callable
-        if not callable(distances) and not isinstance(distances, np.ndarray):
-            raise TypeError("distances_func must be callable or a numpy array")
-        # If distances is matrix, assert that distances and clusters have the same number of rows/points
-        if isinstance(distances, np.ndarray):
+        import types
+        # Check if distances is a generator, array, or other
+        is_generator = isinstance(distances, types.GeneratorType)
+        is_array = isinstance(distances, np.ndarray)
+        if not is_generator and not is_array:
+            raise TypeError("distances must be a generator or a numpy array.")
+        if is_array:
+            # If distances is matrix, assert that distances and clusters have the same number of rows/points
             if distances.shape[0] != clusters.shape[0]:
                 raise ValueError("Number of points is different between distances and clusters.")
             # Assert that distances are in [0,1] (i.e. distances are similarities or dissimilarities)
@@ -1198,17 +1216,18 @@ class Solution_shm(Solution):
         
         # Create shared memory for distances and stream data directly
         self._create_shm_array("distances", (condensed_size,), DISTANCE_DTYPE)
-        
-        # If distances is an array, copy directly
-        if isinstance(distances, np.ndarray):
-            # Copy distances into shared memory
+
+        # If distances is array, copy directly
+        if is_array:
             flat_distances = squareform(distances, force="tovector", checks=False)
             np.copyto(self.distances, flat_distances.astype(dtype=DISTANCE_DTYPE))
         else: #otherwise stream distances into shared memory
-            for i, j, dist in distances():
+            for i, j, dist in distances:
                 if not (0 <= dist <= 1):
                     raise ValueError(f"Distance at ({i}, {j}) = {dist} is not in range [0, 1].")
-                idx = get_index(i, j, self.num_points)
+                min_idx = min(i, j)
+                max_idx = max(i, j)
+                idx = get_index(min_idx, max_idx, self.num_points)
                 self.distances[idx] = dist
         
         # Create shared memory for selection
@@ -2472,13 +2491,73 @@ def get_distance(idx1: int, idx2: int, distances: np.ndarray, num_points: int):
 
 
 ############### EXPERIMENTAL MAIN FUNCTION ###############
+def read_genomes():
+    from Bio import SeqIO
+    id2index = {}
+    index2id = []
+    lineages = []
+    sequences = {}
+    records = {}
+    sequences_per_lineage = {}
+    base_path = "/tudelft.net/staff-umbrella/SARSCoV2Wastewater/GISAID/gisaid_2025_11_16/China/2022-01-01_2023-12-31/Train"
+    for record in SeqIO.parse(f"{base_path}/sequences.fasta", "fasta"):
+        cur_id = record.id
+        cur_seq = str(record.seq)
+        cur_idx = len(index2id)
+
+        sequences[cur_id] = cur_seq
+        records[cur_id] = record
+        id2index[cur_id] = cur_idx
+        index2id.append(cur_id)
+
+    with open(f"{base_path}/metadata.tsv") as f:
+        id_col = 0
+        lineage_col = 16
+        for line in f:
+            line = line.strip().split("\t")
+            cur_id = line[id_col]
+            cur_lineage = line[lineage_col]
+
+            if cur_id in id2index:
+                lineages.append(cur_lineage)
+                if cur_lineage not in sequences_per_lineage:
+                    sequences_per_lineage[cur_lineage] = []
+                sequences_per_lineage[cur_lineage].append(cur_id)
+    
+    return sequences, records, lineages, id2index, index2id, sequences_per_lineage
+
+def generate_distances_sourmash(path, sequence_mapping, id2index, jaccard):
+    QUERY_IDX = 0
+    MATCH_IDX = 2
+    JACCARD_IDX = 6
+    COSINE_IDX = 12
+    try:
+        with open(path, "r") as f_in: #Sourmash outputs distance pairs in csv format
+            next(f_in) #skip header
+            for line in f_in:
+                line = line.strip().split(",")
+                query = int(line[QUERY_IDX])
+                match = int(line[MATCH_IDX])
+                if jaccard:
+                    d = 1.0 - float(line[JACCARD_IDX])
+                else:
+                    d = 1.0 - float(line[COSINE_IDX])
+
+                idx1 = id2index[sequence_mapping[query]]
+                idx2 = id2index[sequence_mapping[match]]
+
+                yield (idx1, idx2, d)
+    except FileNotFoundError:
+        print("Sourmash output file not found.", flush=True)
+        return #empty generator
+
 import time
 from multiprocessing import Pool
 import numpy as np
 import math
 
 def main():
-    SELECTION_COST = 0.1
+    SELECTION_COST = 0.05
     MAX_FRACTION = 0.5
 
     MAX_ITERATIONS = 1_000_000
@@ -2493,20 +2572,21 @@ def main():
         clusters.append(lineages_unique.index(lineage))
     clusters = np.array(clusters, dtype=np.int32)
 
-    try:
-        distances = np.load("_distances.npy")
-        print("Loaded precomputed distances.", flush=True)
-    except FileNotFoundError:
-        print("Distances file does not exist", flush=True)
-        return
-
     MAX_ITERATIONS = 950
-    LOGGING_FREQUENCY = 100
-    SEED = 12345
-    MAX_FRACTION = 0.1
-    
+    LOGGING_FREQUENCY = 50
+    SEED = 1234
+    MAX_FRACTION = 0.5
+
+    sequence_mapping = {}
+    with open("/tudelft.net/staff-umbrella/SARSCoV2Wastewater/GISAID/gisaid_2025_11_16/China/2022-01-01_2023-12-31/Train/sequences_mapping.txt", "r") as f_in:
+        for line in f_in:
+            line = line.strip().split("\t")
+            idx = int(line[0])
+            seq_id = line[1]
+            sequence_mapping[idx] = seq_id
+
     S = Solution.generate_random_solution(
-        distances=distances,
+        distances=generate_distances_sourmash("/tudelft.net/staff-umbrella/SARSCoV2Wastewater/GISAID/gisaid_2025_11_16/China/2022-01-01_2023-12-31/Train/sourmash_distance_s3.csv", sequence_mapping, id2index, jaccard=False),
         clusters=clusters,
         selection_cost=SELECTION_COST,
         cost_per_cluster=0,
@@ -2518,19 +2598,20 @@ def main():
     time_per_iteration, objectives = S.local_search(
         max_iterations=MAX_ITERATIONS,
         max_runtime=600,
-        doubleswap_time_threshold=30.0,
+        doubleswap_time_threshold=45.0,
         logging=LOGGING,
         logging_frequency=LOGGING_FREQUENCY,
         random_move_order=True, random_index_order=True,
     )
     end = time.time()
-    print(f"Local search completed (old). Objective = {objectives[-1]}", flush=True)
+    print(f"Local search completed (old). Objective = {objectives[-1]}. Number selected = {np.sum(S.selection)}/{S.num_points}", flush=True)
     print(f"Total time elapsed: {end - start}s.", flush=True)
     print(f"Average iteration time: {np.mean(time_per_iteration[-200:])}s (std: {np.std(time_per_iteration[-200:], ddof=1)}s).", flush=True)
     print()
-    
-    S = Solution_shm.generate_random_solution(
-        distances=distances,
+
+
+    S2 = Solution_shm.generate_random_solution(
+        distances=generate_distances_sourmash("/tudelft.net/staff-umbrella/SARSCoV2Wastewater/GISAID/gisaid_2025_11_16/China/2022-01-01_2023-12-31/Train/sourmash_distance_s3.csv", sequence_mapping, id2index, jaccard=False),
         clusters=clusters,
         selection_cost=SELECTION_COST,
         cost_per_cluster=0,
@@ -2538,22 +2619,24 @@ def main():
         seed=SEED
     )
     print("Object initialized")
+    np.testing.assert_allclose(S.distances, S2.distances)
     start = time.time()
-    time_per_iteration, objectives = S.local_search(
-        num_processes = 16,
+    time_per_iteration, objectives = S2.local_search(
+        num_processes = 8,
         max_iterations=MAX_ITERATIONS,
         max_runtime=600,
-        doubleswap_time_threshold=60.0,
+        doubleswap_time_threshold=45.0,
         logging=LOGGING,
         logging_frequency=LOGGING_FREQUENCY,
         random_move_order=True, random_index_order=True,
     )
     end = time.time()
-    print(f"Local search completed (shm). Objective = {objectives[-1]}", flush=True)
+    print(f"Local search completed (shm). Objective = {objectives[-1]}. Number selected = {np.sum(S2.selection)}/{S2.num_points}", flush=True)
     print(f"Total time elapsed: {end - start}s.", flush=True)
     print(f"Average iteration time: {np.mean(time_per_iteration[-200:])}s (std: {np.std(time_per_iteration[-200:], ddof=1)}s).", flush=True)
     print()
 
+    print(np.all(S.selection == S2.selection))
 
 if __name__ == "__main__":
     main()
