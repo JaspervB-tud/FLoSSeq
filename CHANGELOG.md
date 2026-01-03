@@ -1,8 +1,9 @@
 # Changelog
 All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
-## [1.0.0] - 03/01/2026
+## [1.0.1] - 03/01/2026
 Code should be (more or less) completely safe now!
+NOTE: version 1.0.0 was pushed but was missing some changes...
 
 ### Changed
 - Fixed some safety problems in multiprocessing
