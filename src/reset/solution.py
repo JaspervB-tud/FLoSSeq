@@ -2639,8 +2639,10 @@ def main():
             )
         print("Time spent in local search:", time.time() - start, flush=True)
 
-        # Sanity check, verify solution is still feasible
+        # Sanity check, verify solution is still feasible and if local search solutions a monotonically improving objective
         assert S.determine_feasibility(), "Final solution is infeasible!"
+        for i in range(1, len(objectives)):
+            assert objectives[i] <= objectives[i-1] + PRECISION_THRESHOLD, "Objective did not monotonically decrease during local search!"
 
         selected_points = np.copy(S.selection)
         # Output
@@ -2650,6 +2652,16 @@ def main():
             print("Final objective:", S.objective[0], flush=True)
             S.cleanup()
         print("Number of selected points:", np.sum(selected_points), flush=True)
+        # Iterate over selected sequences on a per-lineage basis
+        for lineage in unique_lineages:
+            lineage_indices = [idx for idx, seq_id in sequence_mapping.items() if seq2lin[seq_id] == lineage]
+            num_selected_in_lineage = np.sum(selected_points[lineage_indices])
+            if num_selected_in_lineage > 0:
+                print(f"Lineage {lineage}: {num_selected_in_lineage} selected sequences", flush=True)
+
+        if isinstance(S, Solution_shm):
+            S.cleanup()
+        del S
 
     except Exception as e:
         print("An error occurred during execution:", flush=True)
