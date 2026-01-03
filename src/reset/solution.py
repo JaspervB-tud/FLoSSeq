@@ -8,7 +8,7 @@ import itertools
 import math
 import multiprocessing.shared_memory as shm
 import multiprocessing as mp
-from queue import Empty
+from queue import Empty, Full
 import time
 import traceback
 
@@ -1409,23 +1409,16 @@ class Solution_shm(Solution):
                 print(f"Error cleaning up shared memory '{name}': {e}")
         self._shm_handles.clear()
 
-    def close_only(self):
+    def __del__(self):
         """
         Close shared memory resources without unlinking.
-        Useful when multiple processes are using the same shared memory.
+        Used to ensure that shared memory is not unlinked prematurely.
         """
         for handle in self._shm_handles.values():
             try:
                 handle.close()
-            except FileNotFoundError:
-                pass  #already closed
             except Exception as e:
-                print(f"Error closing shared memory: {e}")
-        self._shm_handles.clear()
-
-    def __del__(self):
-        """Ensure cleanup on deletion."""
-        self.cleanup()
+                pass # Silent failure during close
 
     # Core state and feasibility methods
     def calculate_objective(self):
@@ -2200,7 +2193,7 @@ class Solution_shm(Solution):
             try:
                 while True:
                     q.get_nowait()
-            except Exception:
+            except Empty:
                 return
 
         # Main local search loop
@@ -2287,8 +2280,11 @@ class Solution_shm(Solution):
                     move_code, move_content = next_task()
                     if move_code is None:
                         break #no more moves available
-                    # Push task
-                    task_q.put( (int(self.epoch[0]), move_code, move_content) )
+                    # Push task (non-blocking)
+                    try:
+                        task_q.put_nowait( (int(self.epoch[0]), move_code, move_content) )
+                    except Full:
+                        pass # Queue is full, retry in next loop (first checking for results again)
 
                 # If solution changed, process the move
                 if solution_changed:
@@ -2436,7 +2432,7 @@ def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, ack
                         result_q.put( (epoch, move_code, idx_to_remove, candidate_objective) )
                 
     finally:
-        _WORKER_SOL.close_only()
+        del _WORKER_SOL
 
 def get_index(idx1: int, idx2: int, num_points: int):
     """
@@ -2642,19 +2638,23 @@ def main():
         # Sanity check, verify solution is still feasible
         assert S.determine_feasibility(), "Final solution is infeasible!"
 
+        selected_points = np.copy(S.selection)
         # Output
         if args.num_processes <= 1:
             print("Final objective:", S.objective, flush=True)
         else:
             print("Final objective:", S.objective[0], flush=True)
-        print("Number of selected points:", np.sum(S.selection), flush=True)
+            S.cleanup()
+        print("Number of selected points:", np.sum(selected_points), flush=True)
+
     except Exception as e:
         print("An error occurred during execution:", flush=True)
         print(str(e), flush=True)
-        print("Stack trace:", flush=True)
         traceback.print_exc()
+
+        if isinstance(S, Solution_shm):
+            S.cleanup()
         del S
-        print(str(e), flush=True)
 
 if __name__ == "__main__":
     main()
