@@ -26,6 +26,7 @@ MOVE_ADD = 0
 MOVE_SWAP = 1
 MOVE_DSWAP = 2
 MOVE_REMOVE = 3
+MOVE_BATCH = 4
 MOVE_SYNC = 99
 MOVE_STOP = 100
 
@@ -2075,7 +2076,7 @@ class Solution_shm(Solution):
                     random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
                     doubleswap_time_threshold: float = 60.0,
                     task_queue_size: int = 2000,
-                    mp_switch_threshold: float = 5.0,
+                    mp_switch_threshold: float = 10.0,
                     logging: bool = False, logging_frequency: int = 500,
                     ):
         """
@@ -2173,7 +2174,6 @@ class Solution_shm(Solution):
         workers = None
         task_q = None
         result_q = None
-        ack_q = None
         stop_event = None
 
         if num_processes > 1:
@@ -2182,7 +2182,6 @@ class Solution_shm(Solution):
             stop_event = context.Event()
             task_q = context.Queue(maxsize=task_queue_size)
             result_q = context.Queue()
-            ack_q = context.Queue()
 
             # Start worker processes
             workers = []
@@ -2195,7 +2194,6 @@ class Solution_shm(Solution):
                         self.num_clusters,
                         task_q,
                         result_q,
-                        ack_q,
                         stop_event,
                     ),
                     daemon = True,
@@ -2233,9 +2231,8 @@ class Solution_shm(Solution):
                 # If using multiprocessing, clear stop event and drain queues
                 if stop_event is not None:
                     stop_event.clear()
-                    drain_queue(task_q)
+                if result_q is not None:
                     drain_queue(result_q)
-                    drain_queue(ack_q)
 
                 # Create move generators for every movetype so doubleswaps can be removed if needed
                 move_generator = {}
@@ -2337,100 +2334,75 @@ class Solution_shm(Solution):
 
                 # Phase 2: multiprocessing
                 if using_mp and not solution_changed:
+                    epoch = int(self.epoch[0])
+                    BATCH_SIZE = 64 #number of tasks to send in one batch
+                    PREFETCH_BATCHES = 4 * num_processes
+
+                    inflight = 0
                     all_tasks_distributed = False
 
-                    # Distribute tasks to workers and watch for first improving move
-                    while not solution_changed:
+                    # Process move evaluations using multiprocessing
+                    while True:
+                        # Prefill task queue
+                        while (not all_tasks_distributed) and (inflight < PREFETCH_BATCHES):
+                            batch = []
+                            for _ in range(BATCH_SIZE):
+                                move_code, move_content = next_task()
+                                if move_code is None:
+                                    all_tasks_distributed = True
+                                    break
+                                batch.append( (move_code, move_content) )
+
+                            if not batch:
+                                break #no more tasks to distribute
+
+                            try:
+                                task_q.put( (epoch, MOVE_BATCH, batch), timeout=0.001 )
+                                inflight += 1
+                            except Full:
+                                if any(not w.is_alive() for w in workers):
+                                    raise RuntimeError("Worker has died unexpectedly during local search.")
+                                continue
+
+                        # Break if all tasks have been distributed
+                        if inflight == 0 and all_tasks_distributed:
+                            break
+
+                        # Wait for worker results
                         if time.time() - start_time > max_runtime:
                             return time_per_iteration, objectives
-                        
-                        # Check if workers have found improvements
                         try:
-                            epoch, move_type, move_data, candidate_objective = result_q.get(timeout=0.001)
-                            if epoch == self.epoch[0]: #only accept move if epoch matches
-                                solution_changed = True
-                                break #if move was submitted to result_q, break to process it
+                            cur_epoch, cur_move_type, cur_move_data, candidate_objective = result_q.get(timeout=0.05)
                         except Empty:
-                            pass
+                            continue
 
-                        # Distribute tasks to workers
-                        if not all_tasks_distributed:
-                            move_code, move_content = next_task()
-                            if move_code is None:
-                                all_tasks_distributed = True
-                                break
-                            else:
-                                try:
-                                    task_q.put( (int(self.epoch[0]), move_code, move_content), timeout=0.001 )
-                                except Full:
-                                    if any(not w.is_alive() for w in workers):
-                                        raise RuntimeError("Worker has died unexpectedly during local search.")
-                                    pass
+                        # Check epoch
+                        if cur_epoch != epoch:
+                            continue #stale result from previous epoch
 
-                    # In multiprocessing, re-evaluate move outcome to accept
-                    if not solution_changed:
-                        if all_tasks_distributed:
-                            # Wait until task queue is empty AND workers have processed all tasks
-                            timeout_start = time.time() #keep track of timeout to allow grace period
-                            while not solution_changed and (time.time() - timeout_start) < 5.0: #allow 5 seconds grace period
-                                try:
-                                    epoch, move_type, move_data, candidate_objective = result_q.get(timeout=0.01)
-                                    if epoch == self.epoch[0]: #only accept move if epoch matches
-                                        solution_changed = True
-                                        break #if move was submitted to result_q, break to process it
-                                except Empty:
-                                    # Check if all workers are idle
-                                    if task_q.empty():
-                                        all_idle = True
-                                        for _ in workers:
-                                            task_q.put_nowait( (int(self.epoch[0]), MOVE_SYNC, None) )
-                                        for _ in workers:
-                                            while True:
-                                                try:
-                                                    a = ack_q.get(timeout=0.1)
-                                                except Empty:
-                                                    if any(not w.is_alive() for w in workers):
-                                                        raise RuntimeError("Worker has died unexpectedly during local search.")
-                                                    all_idle = False
-                                                    break
-                                                if a == int(self.epoch[0]):
-                                                    break
-                                        if all_idle:
-                                            break #all tasks processed, exit waiting loop
+                        if cur_move_type is None: #batch is done -> decrement inflight
+                            inflight -= 1
+                            continue
+
+                        # Found improving move
+                        solution_changed = True
+                        break
+
                     if solution_changed:
                         stop_event.set() #notify workers to stop current evaluations
 
-                        # Drain queues
-                        drain_queue(task_q)
-                        drain_queue(result_q)
-                        drain_queue(ack_q)
-
-                        # Acknowledge all workers have stopped
-                        for _ in workers:
-                            task_q.put( (int(self.epoch[0]), MOVE_SYNC, None) ) #send sync signal
-                        for _ in workers:
-                            while True:
-                                try:
-                                    a = ack_q.get(timeout=0.001) #wait for ack which puts current iteration
-                                except Empty:
-                                    if any(not w.is_alive() for w in workers):
-                                        raise RuntimeError("Worker has died unexpectedly during local search.")
-                                    continue
-                                if a == int(self.epoch[0]):
-                                    break
-
                         # Re-evaluate move to get updates
-                        if move_type == MOVE_ADD:
-                            idx_to_add = move_data
+                        if cur_move_type == MOVE_ADD:
+                            idx_to_add = cur_move_data
                             idxs_to_add = [idx_to_add]
                             idxs_to_remove = []
                             candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=False)
-                        elif move_type == MOVE_SWAP or move_type == MOVE_DSWAP:
-                            idxs_to_add, idx_to_remove = move_data
+                        elif cur_move_type == MOVE_SWAP or cur_move_type == MOVE_DSWAP:
+                            idxs_to_add, idx_to_remove = cur_move_data
                             idxs_to_remove = [idx_to_remove]
                             candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
-                        elif move_type == MOVE_REMOVE:
-                            idx_to_remove = move_data
+                        elif cur_move_type == MOVE_REMOVE:
+                            idx_to_remove = cur_move_data
                             idxs_to_add = []
                             idxs_to_remove = [idx_to_remove]
                             candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=False)
@@ -2487,7 +2459,7 @@ class Solution_shm(Solution):
         return True #TODO: finish implementation
 
 # Module-level functions
-def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, ack_q, stop_event):
+def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, stop_event):
     """
     Worker function for multiprocessing evaluations.
     This function listens for tasks on the task queue, processes them,
@@ -2505,8 +2477,6 @@ def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, ack
         The queue from which to receive tasks.
     result_q: multiprocessing.Queue
         The queue to which to send results.
-    ack_q: multiprocessing.Queue
-        The queue to which to send acknowledgments.
     stop_event: multiprocessing.Event
         An event that can be used to signal early termination.
     """
@@ -2521,48 +2491,64 @@ def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, ack
             if move_code == MOVE_STOP:
                 break
 
-            # Signal that worker is not inside evaluation
-            if move_code == MOVE_SYNC:
-                ack_q.put(epoch)
-                continue
-
             # Terminate if stop event is set
             if stop_event.is_set():
+                if move_code == MOVE_BATCH:
+                    result_q.put( (epoch, None, None, None)) #keep track of inflight tasks
                 continue
 
             sol = _WORKER_SOL
-
             cur_epoch = sol.epoch[0] if sol.epoch is not None else -1 #cache for consistency
             if cur_epoch != epoch:
                 # Solution has changed, skip current evaluation
                 continue
 
-            # Process move
-            cur_obj = sol.objective[0]
-            if move_code == MOVE_ADD:
-                idx_to_add = move_args
-                candidate_objective, _, _ = sol.evaluate_add(idx_to_add, local_search=True, stop_event=stop_event)
-                if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
-                    # Suppress potentially late publishing of moves from old epochs
-                    final_epoch = sol.epoch[0] if sol.epoch is not None else -1
-                    if (not stop_event.is_set()) and (epoch == final_epoch):
-                        result_q.put( (epoch, move_code, idx_to_add, candidate_objective) )
-            elif move_code == MOVE_SWAP or move_code == MOVE_DSWAP:
-                idxs_to_add, idx_to_remove = move_args
-                candidate_objective, _, _ = sol.evaluate_swap(idxs_to_add, idx_to_remove, stop_event=stop_event)
-                if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
-                    # Suppress potentially late publishing of moves from old epochs
-                    final_epoch = sol.epoch[0] if sol.epoch is not None else -1
-                    if (not stop_event.is_set()) and (epoch == final_epoch):
-                        result_q.put( (epoch, move_code, (idxs_to_add, idx_to_remove), candidate_objective) )
-            elif move_code == MOVE_REMOVE:
-                idx_to_remove = move_args
-                candidate_objective, _, _ = sol.evaluate_remove(idx_to_remove, local_search=True, stop_event=stop_event)
-                if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
-                    # Suppress potentially late publishing of moves from old epochs
-                    final_epoch = sol.epoch[0] if sol.epoch is not None else -1
-                    if (not stop_event.is_set()) and (epoch == final_epoch):
-                        result_q.put( (epoch, move_code, idx_to_remove, candidate_objective) )
+            # Process move or batch of moves
+            if move_code == MOVE_BATCH:
+                cur_obj = sol.objective[0]
+                improved = False
+                for mc, margs in move_args:
+                    if stop_event.is_set():
+                        break
+
+                    cur_epoch = sol.epoch[0] if sol.epoch is not None else -1 #cache for consistency
+                    if (cur_epoch != epoch):
+                        break
+
+                    if mc == MOVE_ADD:
+                        idx_to_add = margs
+                        candidate_objective, _, _ = sol.evaluate_add(idx_to_add, local_search=True, stop_event=stop_event)
+                        if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
+                            # Suppress potentially late publishing of moves from old epochs
+                            final_epoch = sol.epoch[0] if sol.epoch is not None else -1
+                            if (not stop_event.is_set()) and (epoch == final_epoch):
+                                result_q.put( (epoch, mc, idx_to_add, candidate_objective) )
+                                improved = True
+                    elif mc == MOVE_SWAP or mc == MOVE_DSWAP:
+                        idxs_to_add, idx_to_remove = margs
+                        candidate_objective, _, _ = sol.evaluate_swap(idxs_to_add, idx_to_remove, stop_event=stop_event)
+                        if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
+                            # Suppress potentially late publishing of moves from old epochs
+                            final_epoch = sol.epoch[0] if sol.epoch is not None else -1
+                            if (not stop_event.is_set()) and (epoch == final_epoch):
+                                result_q.put( (epoch, mc, (idxs_to_add, idx_to_remove), candidate_objective) )
+                                improved = True
+                    elif mc == MOVE_REMOVE:
+                        idx_to_remove = margs
+                        candidate_objective, _, _ = sol.evaluate_remove(idx_to_remove, local_search=True, stop_event=stop_event)
+                        if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
+                            # Suppress potentially late publishing of moves from old epochs
+                            final_epoch = sol.epoch[0] if sol.epoch is not None else -1
+                            if (not stop_event.is_set()) and (epoch == final_epoch):
+                                result_q.put( (epoch, mc, idx_to_remove, candidate_objective) )
+                                improved = True
+
+                    if improved: #if improving move is found, stop processing remaining moves in batch
+                        break
+
+                if not improved:
+                    result_q.put( (epoch, None, None, None)) #keep track of inflight tasks
+                continue
                 
     finally:
         del _WORKER_SOL
@@ -2704,6 +2690,8 @@ def main():
     parser.add_argument("--max_runtime", type=float, default=60*60, help="Maximum runtime in seconds for local search.")
     parser.add_argument("--doubleswap_time_threshold", type=float, default=60.0, help="Time threshold in seconds after which double swap moves will no longer be considered.")
     parser.add_argument("--num_processes", type=int, default=8, help="Number of processes to use for local search.")
+    parser.add_argument("--output_folder", type=str, help="Path to output folder.")
+    parser.add_argument("--output_file", type=str, help="Path to output file.")
     args = parser.parse_args()
 
     # Fetch data
@@ -2784,14 +2772,24 @@ def main():
             S.cleanup()
         print("Number of selected points:", np.sum(selected_points), flush=True)
 
-        """
         # Iterate over selected sequences on a per-lineage basis
         for lineage in unique_lineages:
             lineage_indices = [idx for idx, seq_id in sequence_mapping.items() if seq2lin[seq_id] == lineage]
             num_selected_in_lineage = np.sum(selected_points[lineage_indices])
             if num_selected_in_lineage > 0:
                 print(f"Lineage {lineage}: {num_selected_in_lineage} selected sequences", flush=True)
-        """
+            else:
+                raise ValueError(f"No sequences selected for lineage {lineage}!")
+
+        # Write to output file
+        if args.output_file is not None and args.output_folder is not None:
+            for lineage in unique_lineages:
+                os.makedirs(f"{args.output_folder}/{lineage}", exist_ok=True)
+                lineage_indices = [idx for idx, seq_id in sequence_mapping.items() if seq2lin[seq_id] == lineage]
+                with open(f"{args.output_folder}/{lineage}/{args.output_file}", "w") as f_out:
+                    for idx in lineage_indices:
+                        if selected_points[idx]:
+                            f_out.write(f"{sequence_mapping[idx]}\n")
 
         if isinstance(S, Solution_shm):
             S.cleanup()
