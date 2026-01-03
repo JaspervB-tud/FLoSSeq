@@ -1,6 +1,16 @@
 # Changelog
 All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
+## [1.0.0] - 03/01/2026
+Code should be (more or less) completely safe now!
+
+### Changed
+- Fixed some safety problems in multiprocessing
+- Changed requirements for distance in initialization (now accepts full distance matrix, OR generator object)
+- Homogenized initialization between multiprocessing and single processing
+    - Made it possible to pass generator for single processing as well
+- Added main so that code can be run
+
 ## [0.2.6] - 30/12/2025
 Tool is renamed to **Re**ference genome **Se**lection **T**ool now!
 

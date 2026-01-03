@@ -2403,7 +2403,8 @@ def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, ack
 
             sol = _WORKER_SOL
 
-            if sol.epoch is not None and epoch != sol.epoch[0]:
+            cur_epoch = sol.epoch[0] if sol.epoch is not None else -1 #cache for consistency
+            if cur_epoch != epoch:
                 # Solution has changed, skip current evaluation
                 continue
 
@@ -2414,21 +2415,24 @@ def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, ack
                 candidate_objective, _, _ = sol.evaluate_add(idx_to_add, local_search=True, stop_event=stop_event)
                 if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
                     # Suppress potentially late publishing of moves from old epochs
-                    if (not stop_event.is_set()) and (sol.epoch is not None) and (epoch == sol.epoch[0]):
+                    final_epoch = sol.epoch[0] if sol.epoch is not None else -1
+                    if (not stop_event.is_set()) and (epoch == final_epoch):
                         result_q.put( (epoch, move_code, idx_to_add, candidate_objective) )
             elif move_code == MOVE_SWAP or move_code == MOVE_DSWAP:
                 idxs_to_add, idx_to_remove = move_args
                 candidate_objective, _, _ = sol.evaluate_swap(idxs_to_add, idx_to_remove, stop_event=stop_event)
                 if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
                     # Suppress potentially late publishing of moves from old epochs
-                    if (not stop_event.is_set()) and (sol.epoch is not None) and (epoch == sol.epoch[0]):
+                    final_epoch = sol.epoch[0] if sol.epoch is not None else -1
+                    if (not stop_event.is_set()) and (epoch == final_epoch):
                         result_q.put( (epoch, move_code, (idxs_to_add, idx_to_remove), candidate_objective) )
             elif move_code == MOVE_REMOVE:
                 idx_to_remove = move_args
                 candidate_objective, _, _ = sol.evaluate_remove(idx_to_remove, local_search=True, stop_event=stop_event)
                 if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
                     # Suppress potentially late publishing of moves from old epochs
-                    if (not stop_event.is_set()) and (sol.epoch is not None) and (epoch == sol.epoch[0]):
+                    final_epoch = sol.epoch[0] if sol.epoch is not None else -1
+                    if (not stop_event.is_set()) and (epoch == final_epoch):
                         result_q.put( (epoch, move_code, idx_to_remove, candidate_objective) )
                 
     finally:
