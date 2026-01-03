@@ -63,28 +63,35 @@ class Solution:
         else:
             self.random_state = np.random.RandomState()
 
-        # Initialize object attributes
-        self.selection = selection.astype(dtype=bool)
+        # Initialize basic attributes
+        self.num_points = np.int64(clusters.shape[0])
+        self.selection_cost = selection_cost
+
+        # Process clusters
+        unique_clusters, inv = np.unique(clusters, return_inverse=True)
+        self.clusters = inv.astype(dtype=np.int64)
+        self.unique_clusters = np.arange(unique_clusters.shape[0], dtype=np.int64)
+        self.original_clusters = unique_clusters #store original cluster ids for reference
+        self.num_clusters = unique_clusters.shape[0]
+
+        # If distances is array, copy directly
         if is_array:
-            flat_distances = squareform(distances.astype(dtype=DISTANCE_DTYPE))
-            self.distances = flat_distances
-        else:
-            num_points = clusters.shape[0]
-            self.distances = np.zeros((num_points * (num_points - 1)) // 2, dtype=DISTANCE_DTYPE)
+            flat_distances = squareform(distances, force='tovector', checks=False)
+            self.distances = flat_distances.astype(dtype=DISTANCE_DTYPE)
+        else: #otherwise stream distances into a flat array
+            self.distances = np.zeros((self.num_points * (self.num_points - 1)) // 2, dtype=DISTANCE_DTYPE)
             for i, j, dist in distances:
                 if not (0 <= dist <= 1):
                     raise ValueError(f"Distance at ({i}, {j}) = {dist} is not in range [0, 1].")
                 min_idx = min(i, j)
                 max_idx = max(i, j)
-                idx = get_index(min_idx, max_idx, num_points)
+                idx = get_index(min_idx, max_idx, self.num_points)
                 self.distances[idx] = dist
 
-        self.clusters = clusters.astype(dtype=np.int64)
-        self.unique_clusters = np.unique(self.clusters)
-        # Cost per cluster based on number of points in each cluster
-        # If cost_per_cluster is True, then the cost is divided by the number of points in each cluster
-        # cost_per_cluster is indexed by cluster indices
-        self.selection_cost = selection_cost
+        # Initialize selection
+        self.selection = selection.astype(dtype=bool)
+
+        ################################ Initialize cost per cluster ################################
         self.cost_per_cluster = np.zeros(self.unique_clusters.shape[0], dtype=AUXILIARY_DISTANCE_DTYPE)
         for cluster in self.unique_clusters:
             if cost_per_cluster == 0: #default behavior, set to selection cost
@@ -95,23 +102,21 @@ class Solution:
                 # Define the average distance in a cluster as the average distance
                 # of all points in the cluster to the centroid of the cluster.
                 cluster_points = np.where(self.clusters == cluster)[0]
-                centroid = np.argmin(np.sum(distances[np.ix_(cluster_points, cluster_points)], axis=1))
-                self.cost_per_cluster[cluster] = np.mean(distances[centroid, cluster_points])
+                centroid_idx = np.argmin([np.sum([get_distance(p, q, self.distances, self.num_points) for q in cluster_points]) for p in cluster_points])
+                centroid = cluster_points[centroid_idx]
+                self.cost_per_cluster[cluster] = np.mean([get_distance(centroid, p, self.distances, self.num_points) for p in cluster_points])
             elif cost_per_cluster == -2:
                 # Define the average distance in a cluster as the average similarity
                 # of all points in the cluster to the centroid of the cluster.
                 cluster_points = np.where(self.clusters == cluster)[0]
-                centroid = np.argmin(np.sum(distances[np.ix_(cluster_points, cluster_points)], axis=1))
-                self.cost_per_cluster[cluster] = selection_cost * ( 1.0-np.mean(distances[centroid, cluster_points]) )
+                centroid_idx = np.argmin([np.sum([get_distance(p, q, self.distances, self.num_points) for q in cluster_points]) for p in cluster_points])
+                centroid = cluster_points[centroid_idx]
+                self.cost_per_cluster[cluster] = selection_cost * ( 1.0 - np.mean([get_distance(centroid, p, self.distances, self.num_points) for p in cluster_points]) )
             elif cost_per_cluster == 3:
                 # Define the average distance in a cluster as the average distance
                 # of all points in the cluster to the closest point in the cluster.
                 cluster_points = np.where(self.clusters == cluster)[0]
-                self.cost_per_cluster[cluster] = np.mean([np.min(distances[point, cluster_points]) for point in cluster_points])
-        self.num_points = clusters.shape[0]
-
-        # Process initial representation to optimize for comparisons speed
-        self.points_per_cluster = {cluster: set(np.where(self.clusters == cluster)[0]) for cluster in self.unique_clusters} #points in every cluster
+                self.cost_per_cluster[cluster] = np.mean([np.min([get_distance(p, q, self.distances, self.num_points) for q in cluster_points if p != q]) for p in cluster_points])
 
         # Calculate objective
         self.calculate_objective()
@@ -120,6 +125,7 @@ class Solution:
     def generate_centroid_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, seed=None):
         """
         Generates a Solution object with an initial solution by selecting the centroid for every cluster.
+        NOTE: This currently only works if distances is provided as a full distance matrix.
 
         Parameters:
         -----------
@@ -1003,14 +1009,6 @@ class Solution:
         if self.num_points != other.num_points:
             print("Number of points is not equal.")
             return False
-        # Check if points per cluster are equal
-        if set(self.points_per_cluster.keys()) != set(other.points_per_cluster.keys()):
-            print("Points per cluster keys are not equal.")
-            return False
-        for cluster in self.points_per_cluster:
-            if self.points_per_cluster[cluster] != other.points_per_cluster[cluster]:
-                print(f"Points in cluster {cluster} are not equal.")
-                return False
         # Check if selections per cluster are equal
         if set(self.selection_per_cluster.keys()) != set(other.selection_per_cluster.keys()):
             print("Selection per cluster keys are not equal.")
@@ -1188,7 +1186,7 @@ class Solution_shm(Solution):
             self.random_state = np.random.RandomState()
 
         # Initialize basic attributes
-        self.num_points = clusters.shape[0]
+        self.num_points = np.int64(clusters.shape[0])
         self.selection_cost = selection_cost
 
         ################################ SHARED MEMORY SETUP ################################
@@ -1265,8 +1263,10 @@ class Solution_shm(Solution):
                 # Define the average distance in a cluster as the average distance
                 # of all points in the cluster to the closest pointn in the cluster.
             elif cost_per_cluster == 3:
+                # Define the average distance in a cluster as the average distance
+                # of all points in the cluster to the closest point in the cluster.
                 cluster_points = np.where(self.clusters == cluster)[0]
-                self.cost_per_cluster[cluster] = np.mean([np.min([get_distance(point, p, self.distances, self.num_points) for p in cluster_points if p != point]) for point in cluster_points])      
+                self.cost_per_cluster[cluster] = np.mean([np.min([get_distance(p, q, self.distances, self.num_points) for q in cluster_points if p != q]) for p in cluster_points])      
         
         # Build CSR representation for clusters
         self._create_shm_array("cluster_members", (self.num_points,), np.int64)
@@ -2490,153 +2490,171 @@ def get_distance(idx1: int, idx2: int, distances: np.ndarray, num_points: int):
     return distances[index]
 
 
-############### EXPERIMENTAL MAIN FUNCTION ###############
-def read_genomes():
-    from Bio import SeqIO
-    id2index = {}
-    index2id = []
-    lineages = []
-    sequences = {}
-    records = {}
-    sequences_per_lineage = {}
-    base_path = "/tudelft.net/staff-umbrella/SARSCoV2Wastewater/GISAID/gisaid_2025_11_16/China/2022-01-01_2023-12-31/Train"
-    for record in SeqIO.parse(f"{base_path}/sequences.fasta", "fasta"):
-        cur_id = record.id
-        cur_seq = str(record.seq)
-        cur_idx = len(index2id)
+############### MAIN FUNCTION FOR MANUSCRIPT ###############
+def read_metadata(path):
+    seq2lin = {}
+    id_col = 0
+    lineage_col = 13
+    with open(path, "r") as f_in:
+        # Don't skip header, header isn't included
+        for line in f_in:
+            parts = line.strip().split("\t")
+            seq2lin[parts[id_col]] = parts[lineage_col]
+    return seq2lin
 
-        sequences[cur_id] = cur_seq
-        records[cur_id] = record
-        id2index[cur_id] = cur_idx
-        index2id.append(cur_id)
+def read_sequence_mapping(path):
+    sequence_mapping = {}
+    with open(path, "r") as f_in:
+        for line in f_in:
+            parts = line.strip().split("\t")
+            idx = int(parts[0])
+            seq_id = parts[1]
+            sequence_mapping[idx] = seq_id
+    return sequence_mapping
 
-    with open(f"{base_path}/metadata.tsv") as f:
-        id_col = 0
-        lineage_col = 16
-        for line in f:
-            line = line.strip().split("\t")
-            cur_id = line[id_col]
-            cur_lineage = line[lineage_col]
+def generate_distances_mash(path):
+    mash_indices = []
+    try:
+        with open(path, "r") as f_in: #Mash outputs distance pairs in tab-delimited format
+            next(f_in) #skip header
+            for line in f_in:
+                parts = line.strip().split("\t")
 
-            if cur_id in id2index:
-                lineages.append(cur_lineage)
-                if cur_lineage not in sequences_per_lineage:
-                    sequences_per_lineage[cur_lineage] = []
-                sequences_per_lineage[cur_lineage].append(cur_id)
-    
-    return sequences, records, lineages, id2index, index2id, sequences_per_lineage
+                cur_idx = int(parts[0])
+                for other_idx, d in enumerate(parts[1:]): #remainder of line are distances to previous indices
+                    other_idx = mash_indices[other_idx]
+                    d = float(d)
 
-def generate_distances_sourmash(path, sequence_mapping, id2index, jaccard):
+                    yield(cur_idx, other_idx, d)
+                mash_indices.append(cur_idx)
+    except FileNotFoundError:
+        print("Mash output file not found.", flush=True)
+        return #empty generator
+                    
+def generate_distances_sourmash(path, jaccard):
     QUERY_IDX = 0
     MATCH_IDX = 2
     JACCARD_IDX = 6
     COSINE_IDX = 12
+
+    dist_idx = JACCARD_IDX if jaccard else COSINE_IDX
     try:
         with open(path, "r") as f_in: #Sourmash outputs distance pairs in csv format
             next(f_in) #skip header
             for line in f_in:
-                line = line.strip().split(",")
-                query = int(line[QUERY_IDX])
-                match = int(line[MATCH_IDX])
-                if jaccard:
-                    d = 1.0 - float(line[JACCARD_IDX])
-                else:
-                    d = 1.0 - float(line[COSINE_IDX])
+                parts = line.strip().split(",")
 
-                idx1 = id2index[sequence_mapping[query]]
-                idx2 = id2index[sequence_mapping[match]]
+                # Parse line
+                query = int(parts[QUERY_IDX])
+                match = int(parts[MATCH_IDX])
+                
+                d = 1.0 - float(parts[dist_idx]) #convert similarity to distance
 
-                yield (idx1, idx2, d)
+                yield (query, match, d)
     except FileNotFoundError:
         print("Sourmash output file not found.", flush=True)
         return #empty generator
 
-import time
-from multiprocessing import Pool
-import numpy as np
-import math
-
 def main():
-    SELECTION_COST = 0.05
-    MAX_FRACTION = 0.5
+    import argparse
+    import time
+    import numpy as np
+    import math
+    import traceback
 
-    MAX_ITERATIONS = 1_000_000
-    NUM_CORES = 32
-    LOGGING = True
-    LOGGING_FREQUENCY = 300
+    parser = argparse.ArgumentParser(description="Run local search on SARS-CoV-2 data.")
+    parser.add_argument("--metadata", type=str, required=True, help="Path to metadata file.")
+    parser.add_argument("--sequences_mapping", type=str, required=True, help="Path to sequences mapping file.")
+    parser.add_argument("--distances", type=str, required=True, help="Path to distances file.")
+    parser.add_argument("--mash", action="store_true", help="Use Mash distances if set, otherwise use sourmash distances.")
+    parser.add_argument("--jaccard", action="store_true", help="Use Jaccard distances for sourmash if set, otherwise use cosine distances.")
+    parser.add_argument("--selection_cost", type=float, default=1.0, help="Selection cost per selected point.")
+    parser.add_argument("--seed", type=int, default=12345, help="Random seed for solution initialization.")
+    parser.add_argument("--max_fraction", type=float, default=0.5, help="Maximum fraction of points to initialize solution.")
+    parser.add_argument("--max_iterations", type=int, default=10_000_000, help="Maximum number of local search iterations.")
+    parser.add_argument("--max_runtime", type=float, default=60*60, help="Maximum runtime in seconds for local search.")
+    parser.add_argument("--doubleswap_time_threshold", type=float, default=60.0, help="Time threshold in seconds after which double swap moves will no longer be considered.")
+    parser.add_argument("--num_processes", type=int, default=8, help="Number of processes to use for local search.")
+    args = parser.parse_args()
 
-    sequences, records, lineages, id2index, index2id, sequences_per_lineage = read_genomes()
-    lineages_unique = sorted(list(set(lineages)))
+    # Fetch data
+    seq2lin = read_metadata(args.metadata)
+    sequence_mapping = read_sequence_mapping(args.sequences_mapping)
+    unique_lineages = sorted(list(set(seq2lin.values())))
     clusters = []
-    for lineage in lineages:
-        clusters.append(lineages_unique.index(lineage))
+    for idx, seq_id in sequence_mapping.items():
+        lineage = seq2lin[seq_id]
+        clusters.append(unique_lineages.index(lineage))
     clusters = np.array(clusters, dtype=np.int32)
 
-    MAX_ITERATIONS = 950
-    LOGGING_FREQUENCY = 50
-    SEED = 1234
-    MAX_FRACTION = 0.5
+    # Create distance generator
+    if args.mash:
+        distance_generator = generate_distances_mash(args.distances)
+    else:
+        distance_generator = generate_distances_sourmash(args.distances, jaccard=args.jaccard)
 
-    sequence_mapping = {}
-    with open("/tudelft.net/staff-umbrella/SARSCoV2Wastewater/GISAID/gisaid_2025_11_16/China/2022-01-01_2023-12-31/Train/sequences_mapping.txt", "r") as f_in:
-        for line in f_in:
-            line = line.strip().split("\t")
-            idx = int(line[0])
-            seq_id = line[1]
-            sequence_mapping[idx] = seq_id
+    # Initialize solution object
+    try:
+        start = time.time() # Measure time to initialize solution object
+        if args.num_processes <= 1:
+            S = Solution.generate_random_solution(
+                distances=distance_generator,
+                clusters=clusters,
+                selection_cost=args.selection_cost,
+                cost_per_cluster=0, #use standard cost per cluster (cost for selecting is equal to selection cost)
+                max_fraction=args.max_fraction,
+                seed=args.seed
+            )
+        else:
+            S = Solution_shm.generate_random_solution(
+                distances=distance_generator,
+                clusters=clusters,
+                selection_cost=args.selection_cost,
+                cost_per_cluster=0, #use standard cost per cluster (cost for selecting is equal to selection cost)
+                max_fraction=args.max_fraction,
+                seed=args.seed
+            )
+        print("Time spent initializing solution:", time.time() - start, flush=True)
 
-    S = Solution.generate_random_solution(
-        distances=generate_distances_sourmash("/tudelft.net/staff-umbrella/SARSCoV2Wastewater/GISAID/gisaid_2025_11_16/China/2022-01-01_2023-12-31/Train/sourmash_distance_s3.csv", sequence_mapping, id2index, jaccard=False),
-        clusters=clusters,
-        selection_cost=SELECTION_COST,
-        cost_per_cluster=0,
-        max_fraction=MAX_FRACTION,
-        seed=SEED
-    )
+        # Run local search
+        start = time.time()
+        if args.num_processes <= 1:
+            time_per_iteration, objectives = S.local_search(
+                max_iterations=args.max_iterations,
+                max_runtime=args.max_runtime,
+                random_move_order=True, random_index_order=True,
+                doubleswap_time_threshold=args.doubleswap_time_threshold,
+                logging=True,
+                logging_frequency=100,
+            )
+        else:
+            time_per_iteration, objectives = S.local_search(
+                num_processes = args.num_processes,
+                max_iterations=args.max_iterations,
+                max_runtime=args.max_runtime,
+                random_move_order=True, random_index_order=True,
+                doubleswap_time_threshold=args.doubleswap_time_threshold,
+                logging=True,
+                logging_frequency=100,
+            )
+        print("Time spent in local search:", time.time() - start, flush=True)
 
-    start = time.time()
-    time_per_iteration, objectives = S.local_search(
-        max_iterations=MAX_ITERATIONS,
-        max_runtime=600,
-        doubleswap_time_threshold=45.0,
-        logging=LOGGING,
-        logging_frequency=LOGGING_FREQUENCY,
-        random_move_order=True, random_index_order=True,
-    )
-    end = time.time()
-    print(f"Local search completed (old). Objective = {objectives[-1]}. Number selected = {np.sum(S.selection)}/{S.num_points}", flush=True)
-    print(f"Total time elapsed: {end - start}s.", flush=True)
-    print(f"Average iteration time: {np.mean(time_per_iteration[-200:])}s (std: {np.std(time_per_iteration[-200:], ddof=1)}s).", flush=True)
-    print()
+        # Sanity check, verify solution is still feasible
+        assert S.determine_feasibility(), "Final solution is infeasible!"
 
-
-    S2 = Solution_shm.generate_random_solution(
-        distances=generate_distances_sourmash("/tudelft.net/staff-umbrella/SARSCoV2Wastewater/GISAID/gisaid_2025_11_16/China/2022-01-01_2023-12-31/Train/sourmash_distance_s3.csv", sequence_mapping, id2index, jaccard=False),
-        clusters=clusters,
-        selection_cost=SELECTION_COST,
-        cost_per_cluster=0,
-        max_fraction=MAX_FRACTION,
-        seed=SEED
-    )
-    print("Object initialized")
-    np.testing.assert_allclose(S.distances, S2.distances)
-    start = time.time()
-    time_per_iteration, objectives = S2.local_search(
-        num_processes = 8,
-        max_iterations=MAX_ITERATIONS,
-        max_runtime=600,
-        doubleswap_time_threshold=45.0,
-        logging=LOGGING,
-        logging_frequency=LOGGING_FREQUENCY,
-        random_move_order=True, random_index_order=True,
-    )
-    end = time.time()
-    print(f"Local search completed (shm). Objective = {objectives[-1]}. Number selected = {np.sum(S2.selection)}/{S2.num_points}", flush=True)
-    print(f"Total time elapsed: {end - start}s.", flush=True)
-    print(f"Average iteration time: {np.mean(time_per_iteration[-200:])}s (std: {np.std(time_per_iteration[-200:], ddof=1)}s).", flush=True)
-    print()
-
-    print(np.all(S.selection == S2.selection))
+        # Output
+        if args.num_processes <= 1:
+            print("Final objective:", S.objective, flush=True)
+        else:
+            print("Final objective:", S.objective[0], flush=True)
+        print("Number of selected points:", np.sum(S.selection), flush=True)
+    except Exception as e:
+        print("An error occurred during execution:", flush=True)
+        print(str(e), flush=True)
+        print("Stack trace:", flush=True)
+        traceback.print_exc()
+        del S
+        print(str(e), flush=True)
 
 if __name__ == "__main__":
     main()
