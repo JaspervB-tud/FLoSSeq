@@ -1,7 +1,11 @@
-"""
-TO-DO:
-    - Potential problem with cluster labels that are not necessarily 0-indexed or consecutive!!
-"""
+# Set number of threads for various libraries to 1 to avoid oversubscription
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+# Import libraries
 import numpy as np
 from scipy.spatial.distance import squareform
 import itertools
@@ -224,7 +228,7 @@ class Solution:
         # Randomly select additional points up to the max_fraction limit
         num_points = clusters.shape[0]
         max_selected_points = int(max_fraction * num_points)
-        remaining_points = np.where(~selection)[0]
+        remaining_points = np.flatnonzero(~selection)
         num_additional_points = max(0, max_selected_points - np.sum(selection))
         additional_points = random_state.choice(remaining_points, size=num_additional_points, replace=False)
         selection[additional_points] = True
@@ -238,7 +242,7 @@ class Solution:
         NOTE: A solution is feasible if every cluster has at least one selected point.
         """
         uncovered_clusters = set(self.unique_clusters)
-        for point in np.where(self.selection)[0]:
+        for point in np.flatnonzero(self.selection):
             uncovered_clusters.discard(self.clusters[point])
         return len(uncovered_clusters) == 0
     
@@ -278,7 +282,7 @@ class Solution:
         # Calculate the objective value
         objective = 0.0
         # Selection cost
-        for idx in np.where(self.selection)[0]:
+        for idx in np.flatnonzero(self.selection):
             objective += self.cost_per_cluster[self.clusters[idx]]
         # Intra cluster distance costs
         for cluster in self.unique_clusters:
@@ -728,8 +732,8 @@ class Solution:
         idx_to_remove: int
             Index of point to remove from the solution.
         """
-        selected = list(self.selection_per_cluster[cluster])
-        unselected = list(self.nonselection_per_cluster[cluster])
+        selected = sorted(list(self.selection_per_cluster[cluster])) #sorted to ensure consistent ordering
+        unselected = sorted(list(self.nonselection_per_cluster[cluster]))
 
         if len(selected) == 0 or len(unselected) < number_to_add: #skip permuting if no points to swap
             return #empty generator
@@ -757,20 +761,15 @@ class Solution:
             NOTE: This uses the random state stored in the Solution object.
             NOTE: Although the cluster order can be randomized, the cluster is exhausted before moving to the next cluster.
         """
+        indices = np.flatnonzero(self.selection)
         if random:
-            cluster_order = self.random_state.permutation(self.unique_clusters)
+            for idx in self.random_state.permutation(indices):
+                if len(self.selection_per_cluster[self.clusters[idx]]) > 1:
+                    yield idx
         else:
-            cluster_order = self.unique_clusters
-        for cluster in cluster_order:
-            cur_list = list(self.selection_per_cluster[cluster])
-            if len(self.selection_per_cluster[cluster]) > 1:
-                if random:
-                    #for idx in self.random_state.permutation(sorted(list(self.selection_per_cluster[cluster]))):
-                    for idx in self.random_state.permutation(cur_list):
-                        yield idx
-                else:
-                    for idx in self.selection_per_cluster[cluster]:
-                        yield idx
+            for idx in indices:
+                if len(self.selection_per_cluster[self.clusters[idx]]) > 1:
+                    yield idx
 
     # Local search (single processing, for multiprocessing see Solution_shm)
     def local_search(self,
@@ -1107,7 +1106,7 @@ class Solution:
         if not is_feasible:
             return None
         # Selection costs
-        for idx in np.where(self.selection)[0]:
+        for idx in np.flatnonzero(self.selection):
             cost["selection"] += selection_cost
         # Intra cluster distance costs
         for cluster in self.unique_clusters:
@@ -2076,6 +2075,7 @@ class Solution_shm(Solution):
                     random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
                     doubleswap_time_threshold: float = 60.0,
                     task_queue_size: int = 2000,
+                    mp_switch_threshold: float = 5.0,
                     logging: bool = False, logging_frequency: int = 500,
                     ):
         """
@@ -2118,6 +2118,11 @@ class Solution_shm(Solution):
         task_queue_size: int
             The maximum size of the task queue used to distribute evaluation tasks to worker processes.
             Default is 2000.
+        mp_switch_threshold: float
+            The time threshold in seconds after which multiprocessing will be used. Default is 5.0 seconds.
+            NOTE: if the local search iteration time is below this threshold, the local search will
+            be performed in the main process only (without using worker processes), otherwise it will switch
+            to multiprocessing for the current iteration.
         logging: bool
             If True, information about the local search will be printed. Default is False.
         logging_frequency: int
@@ -2152,6 +2157,8 @@ class Solution_shm(Solution):
             raise ValueError("doubleswap_time_threshold must be a positive number.")
         if not isinstance(task_queue_size, int) or task_queue_size < 1:
             raise ValueError("task_queue_size must be a positive integer.")
+        if not isinstance(mp_switch_threshold, (int, float)) or mp_switch_threshold < 0:
+            raise ValueError("mp_switch_threshold must be a non-negative number.")
         if not isinstance(logging, bool):
             raise ValueError("logging must be a boolean value.")
         if not isinstance(logging_frequency, int) or logging_frequency < 1:
@@ -2162,34 +2169,44 @@ class Solution_shm(Solution):
         # Create epoch tag
         self.epoch[0] = 0
 
-        # Create context variables and main process variables
-        context = mp.get_context("spawn")
-        stop_event = context.Event()
-        task_q = context.Queue(maxsize=task_queue_size)
-        result_q = context.Queue()
-        ack_q = context.Queue()
+        # Start worker processes if num_processes > 1
+        workers = None
+        task_q = None
+        result_q = None
+        ack_q = None
+        stop_event = None
 
-        # Start worker processes (attach shared memory handles)
-        workers = []
-        for _ in range(num_processes):
-            worker = context.Process(
-                target = _shm_worker_main,
-                args = (
-                    self.shm_prefix,
-                    self.num_points,
-                    self.num_clusters,
-                    task_q,
-                    result_q,
-                    ack_q,
-                    stop_event,
-                ),
-                daemon = True,
-            )
-            worker.start()
-            workers.append(worker)
+        if num_processes > 1:
+            # Create context variables and main process variables
+            context = mp.get_context("spawn")
+            stop_event = context.Event()
+            task_q = context.Queue(maxsize=task_queue_size)
+            result_q = context.Queue()
+            ack_q = context.Queue()
+
+            # Start worker processes
+            workers = []
+            for _ in range(num_processes):
+                worker = context.Process(
+                    target = _shm_worker_main,
+                    args = (
+                        self.shm_prefix,
+                        self.num_points,
+                        self.num_clusters,
+                        task_q,
+                        result_q,
+                        ack_q,
+                        stop_event,
+                    ),
+                    daemon = True,
+                )
+                worker.start()
+                workers.append(worker)
 
         def drain_queue(q):
             """Helper function to drain a queue."""
+            if q is None:
+                return
             try:
                 while True:
                     q.get_nowait()
@@ -2208,12 +2225,17 @@ class Solution_shm(Solution):
                 if time.time() - start_time > max_runtime:
                     print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
                     break
-                current_iteration_time = time.time()
+
                 objectives.append(self.objective[0])
                 solution_changed = False
-                stop_event.clear()
-                drain_queue(result_q)
+                using_mp = False
 
+                # If using multiprocessing, clear stop event and drain queues
+                if stop_event is not None:
+                    stop_event.clear()
+                    drain_queue(task_q)
+                    drain_queue(result_q)
+                    drain_queue(ack_q)
 
                 # Create move generators for every movetype so doubleswaps can be removed if needed
                 move_generator = {}
@@ -2228,6 +2250,7 @@ class Solution_shm(Solution):
                         move_generator["remove"] = self.generate_indices_remove(random=random_index_order)
                 active_moves = move_order.copy() #list of move types for this iteration
 
+                # Helper function for getting next task and handling doubleswap time threshold
                 def next_task():
                     """
                     Helper function to get the next task from the move generators.
@@ -2262,69 +2285,171 @@ class Solution_shm(Solution):
                         
                     return None, None
 
-                # Distribute tasks to workers and watch for first improving move
-                while not solution_changed:
-                    if time.time() - current_iteration_time > max_runtime:
-                        break
+                move_counter = 0
+                current_iteration_time = time.time()
+                # Phase 1: single processing
+                while active_moves and not solution_changed:
+                    if (workers is not None and time.time() - current_iteration_time) > mp_switch_threshold:
+                        if logging:
+                            print(f"Iteration {iteration}: Switching to multiprocessing after {time.time() - current_iteration_time:.2f}s in single processing mode.", flush=True)
+                        using_mp = True
+                        break #switch to multiprocessing
 
-                    # Check if workers have found improvements
-                    try:
-                        epoch, move_type, move_data, candidate_objective = result_q.get_nowait()
-                        if epoch == self.epoch[0]: #only accept move if epoch matches
-                            solution_changed = True
-                            break #if move was submitted to result_q, break to process it
-                    except Exception:
-                        pass
-
-                    # Distribute tasks to workers
+                    # Select next move type
                     move_code, move_content = next_task()
                     if move_code is None:
                         break #no more moves available
-                    # Push task (non-blocking)
-                    try:
-                        task_q.put_nowait( (int(self.epoch[0]), move_code, move_content) )
-                    except Full:
-                        pass # Queue is full, retry in next loop (first checking for results again)
 
-                # If solution changed, process the move
-                if solution_changed:
-                    stop_event.set() #notify workers to stop current evaluations
+                    # Evaluate move in single processing
+                    if move_code  == MOVE_ADD:
+                        idx_to_add = move_content
+                        idxs_to_add = [idx_to_add]
+                        idxs_to_remove = []
+                        candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=True)
+                        if candidate_objective < self.objective[0] and abs(candidate_objective - self.objective[0]) > PRECISION_THRESHOLD:
+                            solution_changed = True
+                            break
+                    elif move_code == MOVE_SWAP or move_code == MOVE_DSWAP:
+                        idxs_to_add, idx_to_remove = move_content
+                        idxs_to_remove = [idx_to_remove]
+                        candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
+                        if candidate_objective < self.objective[0] and abs(candidate_objective - self.objective[0]) > PRECISION_THRESHOLD:
+                            solution_changed = True
+                            break
+                    elif move_code == MOVE_REMOVE:
+                        idx_to_remove = move_content
+                        idxs_to_add = []
+                        idxs_to_remove = [idx_to_remove]
+                        candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=True)
+                        if candidate_objective < self.objective[0] and abs(candidate_objective - self.objective[0]) > PRECISION_THRESHOLD:
+                            solution_changed = True
+                            break
+                    move_counter += 1
 
-                    # Drain task and result queue
-                    drain_queue(task_q)
-                    drain_queue(result_q)
-                    drain_queue(ack_q)
+                    # Check runtime
+                    if move_counter % 500 == 0:
+                        # Check max runtime
+                        if time.time() - start_time > max_runtime:
+                            if logging:
+                                print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
+                            return time_per_iteration, objectives
 
-                    # Acknowledge all workers have stopped
-                    for _ in workers:
-                        task_q.put( (int(self.epoch[0]), MOVE_SYNC, None) ) #send sync signal
-                    for _ in workers:
-                        while True:
-                            a = ack_q.get() #wait for ack which puts current iteration
-                            if a == int(self.epoch[0]):
+
+                # Phase 2: multiprocessing
+                if using_mp and not solution_changed:
+                    all_tasks_distributed = False
+
+                    # Distribute tasks to workers and watch for first improving move
+                    while not solution_changed:
+                        if time.time() - start_time > max_runtime:
+                            return time_per_iteration, objectives
+                        
+                        # Check if workers have found improvements
+                        try:
+                            epoch, move_type, move_data, candidate_objective = result_q.get(timeout=0.001)
+                            if epoch == self.epoch[0]: #only accept move if epoch matches
+                                solution_changed = True
+                                break #if move was submitted to result_q, break to process it
+                        except Empty:
+                            pass
+
+                        # Distribute tasks to workers
+                        if not all_tasks_distributed:
+                            move_code, move_content = next_task()
+                            if move_code is None:
+                                all_tasks_distributed = True
                                 break
+                            else:
+                                try:
+                                    task_q.put( (int(self.epoch[0]), move_code, move_content), timeout=0.001 )
+                                except Full:
+                                    if any(not w.is_alive() for w in workers):
+                                        raise RuntimeError("Worker has died unexpectedly during local search.")
+                                    pass
 
-                    # Accept the move by re-evaluating it to get the updates
-                    if move_type == MOVE_ADD:
-                        idx_to_add = move_data
-                        new_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=False)
-                        self.accept_move([idx_to_add], [], new_objective, add_within_cluster, add_for_other_clusters)
-                    elif move_type == MOVE_SWAP:
-                        idxs_to_add, idx_to_remove = move_data
-                        new_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
-                        self.accept_move(idxs_to_add, [idx_to_remove], new_objective, add_within_cluster, add_for_other_clusters)
-                    elif move_type == MOVE_DSWAP:
-                        idxs_to_add, idx_to_remove = move_data
-                        new_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
-                        self.accept_move(idxs_to_add, [idx_to_remove], new_objective, add_within_cluster, add_for_other_clusters)
-                    elif move_type == MOVE_REMOVE:
-                        idx_to_remove = move_data
-                        new_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=False)
-                        self.accept_move([], [idx_to_remove], new_objective, add_within_cluster, add_for_other_clusters)
+                    # In multiprocessing, re-evaluate move outcome to accept
+                    if not solution_changed:
+                        if all_tasks_distributed:
+                            # Wait until task queue is empty AND workers have processed all tasks
+                            timeout_start = time.time() #keep track of timeout to allow grace period
+                            while not solution_changed and (time.time() - timeout_start) < 5.0: #allow 5 seconds grace period
+                                try:
+                                    epoch, move_type, move_data, candidate_objective = result_q.get(timeout=0.01)
+                                    if epoch == self.epoch[0]: #only accept move if epoch matches
+                                        solution_changed = True
+                                        break #if move was submitted to result_q, break to process it
+                                except Empty:
+                                    # Check if all workers are idle
+                                    if task_q.empty():
+                                        all_idle = True
+                                        for _ in workers:
+                                            task_q.put_nowait( (int(self.epoch[0]), MOVE_SYNC, None) )
+                                        for _ in workers:
+                                            while True:
+                                                try:
+                                                    a = ack_q.get(timeout=0.1)
+                                                except Empty:
+                                                    if any(not w.is_alive() for w in workers):
+                                                        raise RuntimeError("Worker has died unexpectedly during local search.")
+                                                    all_idle = False
+                                                    break
+                                                if a == int(self.epoch[0]):
+                                                    break
+                                        if all_idle:
+                                            break #all tasks processed, exit waiting loop
+                    if solution_changed:
+                        stop_event.set() #notify workers to stop current evaluations
 
+                        # Drain queues
+                        drain_queue(task_q)
+                        drain_queue(result_q)
+                        drain_queue(ack_q)
+
+                        # Acknowledge all workers have stopped
+                        for _ in workers:
+                            task_q.put( (int(self.epoch[0]), MOVE_SYNC, None) ) #send sync signal
+                        for _ in workers:
+                            while True:
+                                try:
+                                    a = ack_q.get(timeout=0.001) #wait for ack which puts current iteration
+                                except Empty:
+                                    if any(not w.is_alive() for w in workers):
+                                        raise RuntimeError("Worker has died unexpectedly during local search.")
+                                    continue
+                                if a == int(self.epoch[0]):
+                                    break
+
+                        # Re-evaluate move to get updates
+                        if move_type == MOVE_ADD:
+                            idx_to_add = move_data
+                            idxs_to_add = [idx_to_add]
+                            idxs_to_remove = []
+                            candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=False)
+                        elif move_type == MOVE_SWAP or move_type == MOVE_DSWAP:
+                            idxs_to_add, idx_to_remove = move_data
+                            idxs_to_remove = [idx_to_remove]
+                            candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
+                        elif move_type == MOVE_REMOVE:
+                            idx_to_remove = move_data
+                            idxs_to_add = []
+                            idxs_to_remove = [idx_to_remove]
+                            candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=False)
+
+                # If solution changed (regardless of single or multiprocessing), accept the move
+                if solution_changed:
+                    self.accept_move(idxs_to_add, idxs_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
+                    del idxs_to_add, idxs_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters
+
+                    # Update time tracking and epoch/iteration counters
                     time_per_iteration.append(time.time() - current_iteration_time)
                     iteration += 1
                     self.epoch[0] += 1
+
+                    if time.time() - start_time > max_runtime:
+                        if logging:
+                            print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
+                        return time_per_iteration, objectives
+
                     if logging and (iteration % logging_frequency == 0):
                         print(f"Iteration {iteration}: Objective = {self.objective[0]:.10f}", flush=True)
                         print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
@@ -2333,18 +2458,22 @@ class Solution_shm(Solution):
                     break
 
             return time_per_iteration, objectives
+        
         finally:
             # Terminate workers
-            stop_event.set()
-            drain_queue(task_q)
-            for _ in workers:
-                try:
-                    task_q.put( (int(self.epoch[0]), MOVE_STOP, None) )
-                except Exception:
-                    pass
-
-            for worker in workers:
-                worker.join(timeout=2.0)
+            if stop_event is not None:
+                stop_event.set()
+            if task_q is not None:
+                drain_queue(task_q)
+            if workers is not None and task_q is not None:
+                for _ in workers:
+                    try:
+                        task_q.put( (int(self.epoch[0]), MOVE_STOP, None) )
+                    except Full:
+                        pass
+                # Join workers
+                for worker in workers:
+                    worker.join(timeout=2.0)
 
     # Equality check
     def __eq__(self, other):
@@ -2634,6 +2763,7 @@ def main():
                 max_runtime=args.max_runtime,
                 random_move_order=True, random_index_order=True,
                 doubleswap_time_threshold=args.doubleswap_time_threshold,
+                mp_switch_threshold=5.0,
                 logging=True,
                 logging_frequency=100,
             )
@@ -2646,18 +2776,22 @@ def main():
 
         selected_points = np.copy(S.selection)
         # Output
+        S.calculate_objective() #ensure objective is up to date
         if args.num_processes <= 1:
             print("Final objective:", S.objective, flush=True)
         else:
             print("Final objective:", S.objective[0], flush=True)
             S.cleanup()
         print("Number of selected points:", np.sum(selected_points), flush=True)
+
+        """
         # Iterate over selected sequences on a per-lineage basis
         for lineage in unique_lineages:
             lineage_indices = [idx for idx, seq_id in sequence_mapping.items() if seq2lin[seq_id] == lineage]
             num_selected_in_lineage = np.sum(selected_points[lineage_indices])
             if num_selected_in_lineage > 0:
                 print(f"Lineage {lineage}: {num_selected_in_lineage} selected sequences", flush=True)
+        """
 
         if isinstance(S, Solution_shm):
             S.cleanup()
