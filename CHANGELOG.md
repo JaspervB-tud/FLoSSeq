@@ -2,7 +2,7 @@
 All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
 
-## [1.1.1] - 04/01/2026
+## [1.1.2] - 04/01/2026
 ### Changed
 - Finalized main function
 
