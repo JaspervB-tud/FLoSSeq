@@ -2,6 +2,10 @@
 All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
 
+## [1.1.1] - 04/01/2026
+### Changed
+- Finalized main function
+
 ## [1.1.0] - 03/01/2026
 ### Changed
 - Added single core processing to Solution_shm which enters multiprocessing after certain amount of time has passed.

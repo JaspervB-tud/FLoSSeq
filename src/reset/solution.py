@@ -2691,7 +2691,6 @@ def main():
     parser.add_argument("--doubleswap_time_threshold", type=float, default=60.0, help="Time threshold in seconds after which double swap moves will no longer be considered.")
     parser.add_argument("--num_processes", type=int, default=8, help="Number of processes to use for local search.")
     parser.add_argument("--output_folder", type=str, help="Path to output folder.")
-    parser.add_argument("--output_file", type=str, help="Path to output file.")
     args = parser.parse_args()
 
     # Fetch data
@@ -2705,10 +2704,16 @@ def main():
     clusters = np.array(clusters, dtype=np.int32)
 
     # Create distance generator
+    output_filename = ""
     if args.mash:
         distance_generator = generate_distances_mash(args.distances)
+        output_filename = f"MASH_{args.distances.split('_')[-1].replace('.dist', '')}.txt"
     else:
         distance_generator = generate_distances_sourmash(args.distances, jaccard=args.jaccard)
+        if args.jaccard:
+            output_filename = f"SOURMASH_Jaccard_{args.distances.split('_')[-1].replace('.csv', '')}.txt"
+        else:
+            output_filename = f"SOURMASH_Cosine_{args.distances.split('_')[-1].replace('.csv', '')}.txt"
 
     # Initialize solution object
     try:
@@ -2751,7 +2756,7 @@ def main():
                 max_runtime=args.max_runtime,
                 random_move_order=True, random_index_order=True,
                 doubleswap_time_threshold=args.doubleswap_time_threshold,
-                mp_switch_threshold=5.0,
+                mp_switch_threshold=15.0,
                 logging=True,
                 logging_frequency=100,
             )
@@ -2782,11 +2787,11 @@ def main():
                 raise ValueError(f"No sequences selected for lineage {lineage}!")
 
         # Write to output file
-        if args.output_file is not None and args.output_folder is not None:
+        if output_filename != "" and args.output_folder is not None:
             for lineage in unique_lineages:
                 os.makedirs(f"{args.output_folder}/{lineage}", exist_ok=True)
                 lineage_indices = [idx for idx, seq_id in sequence_mapping.items() if seq2lin[seq_id] == lineage]
-                with open(f"{args.output_folder}/{lineage}/{args.output_file}", "w") as f_out:
+                with open(f"{args.output_folder}/{lineage}/{output_filename}", "w") as f_out:
                     for idx in lineage_indices:
                         if selected_points[idx]:
                             f_out.write(f"{sequence_mapping[idx]}\n")
