@@ -1057,7 +1057,7 @@ class Solution:
             print("Clusters could not be compared.")
             return False
         # Check if selection cost is equal
-        if not np.isclose(self.selection_cost, other.selection_cost, rel_tol=PRECISION_THRESHOLD):
+        if not math.isclose(self.selection_cost, other.selection_cost, rel_tol=PRECISION_THRESHOLD):
             print("Selection costs are not equal.")
             return False
         # Check if cost per cluster is equal
@@ -1103,11 +1103,11 @@ class Solution:
             print("Closest inter cluster points could not be compared.")
             return False
         # Check if scales are equal
-        if not np.isclose(self.scale, other.scale, rel_tol=PRECISION_THRESHOLD):
+        if not math.isclose(self.scale, other.scale, rel_tol=PRECISION_THRESHOLD):
             print("Scales are not equal.")
             return False
         # Check if objectives are equal
-        if not np.isclose(self.objective, other.objective, rel_tol=PRECISION_THRESHOLD):
+        if not math.isclose(self.objective, other.objective, rel_tol=PRECISION_THRESHOLD):
             print("Objectives are not equal.")
             return False
         # Check if components are equal
@@ -2498,7 +2498,7 @@ class Solution_shm(Solution):
             print("Clusters could not be compared.")
             return False
         # Check if selection cost is equal
-        if not np.isclose(self.selection_cost, other.selection_cost, atol=PRECISION_THRESHOLD):
+        if not math.isclose(self.selection_cost, other.selection_cost, rel_tol=PRECISION_THRESHOLD):
             print("Selection costs are not equal.")
             return False
         # Check if cost per cluster is equal
@@ -2544,11 +2544,11 @@ class Solution_shm(Solution):
             print("Closest inter cluster points could not be compared.")
             return False
         # Check if scales are equal
-        if not np.isclose(self.scale[0], other.scale[0], atol=PRECISION_THRESHOLD):
+        if not math.isclose(self.scale[0], other.scale[0], rel_tol=PRECISION_THRESHOLD):
             print("Scales are not equal.")
             return False
         # Check if objectives are equal
-        if not np.isclose(self.objective[0], other.objective[0], atol=PRECISION_THRESHOLD):
+        if not math.isclose(self.objective[0], other.objective[0], rel_tol=PRECISION_THRESHOLD):
             print("Objectives are not equal.")
             return False
         # Check if components are equal
