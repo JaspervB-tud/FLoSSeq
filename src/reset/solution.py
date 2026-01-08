@@ -91,9 +91,9 @@ class Solution:
         self.num_clusters = unique_clusters.shape[0]
         # If scale is set, re-scale to same range as intra-costs and multiply by provided scale
         if set_scale:
-            self.intrinsic_scale = scale * (self.num_points-self.num_clusters) / ((self.num_clusters * (self.num_clusters - 1)) / 2) #same scale as intra-cluster distances
+            self.scale = scale * (self.num_points-self.num_clusters) / ((self.num_clusters * (self.num_clusters - 1)) / 2) #same scale as intra-cluster distances
         else: #if no scale, use default of 1.0 (no re-scaling)
-            self.intrinsic_scale = 1.0
+            self.scale = 1.0
 
         # If distances is array, copy directly
         if is_array:
@@ -378,20 +378,22 @@ class Solution:
                 candidate_components[1] += cur_dist - self.closest_distances_intra[idx] #update intra component
                 add_within_cluster.append((idx, idx_to_add, cur_dist))
 
-        # Calculate inter-cluster distances for other clusters
+
+        # Calculate inter-cluster distances for other clusters (only if scale > 0)
         add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
-        for other_cluster in self.unique_clusters:
-            if other_cluster != cluster:
-                cur_max = self.closest_distances_inter[cluster, other_cluster]
-                cur_idx = -1
-                for idx in self.selection_per_cluster[other_cluster]:
-                    cur_similarity = 1 - get_distance(idx, idx_to_add, self.distances, self.num_points) #this is the similarity, if it is more similar then change solution
-                    if cur_similarity > cur_max:
-                        cur_max = cur_similarity
-                        cur_idx = idx
-                if cur_idx > -1:
-                    candidate_components[2] += cur_max - self.closest_distances_inter[cluster, other_cluster] #update inter component
-                    add_for_other_clusters.append((other_cluster, (idx_to_add, cur_idx), cur_max))
+        if self.scale > 0:
+            for other_cluster in self.unique_clusters:
+                if other_cluster != cluster:
+                    cur_max = self.closest_distances_inter[cluster, other_cluster]
+                    cur_idx = -1
+                    for idx in self.selection_per_cluster[other_cluster]:
+                        cur_similarity = 1 - get_distance(idx, idx_to_add, self.distances, self.num_points) #this is the similarity, if it is more similar then change solution
+                        if cur_similarity > cur_max:
+                            cur_max = cur_similarity
+                            cur_idx = idx
+                    if cur_idx > -1:
+                        candidate_components[2] += cur_max - self.closest_distances_inter[cluster, other_cluster] #update inter component
+                        add_for_other_clusters.append((other_cluster, (idx_to_add, cur_idx), cur_max))
 
         candidate_objective = np.longdouble(candidate_components[0] + candidate_components[1] + candidate_components[2] * self.scale) #final objective rescaled
         return candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters
@@ -469,31 +471,32 @@ class Solution:
                     candidate_components[1] += cur_dist - cur_closest_distance #update intra component
                     add_within_cluster.append((idx, idx_to_add, cur_dist))
 
-        # Calculate inter-cluster distances for all other clusters
+        # Calculate inter-cluster distances for all other clusters (only if scale > 0)
         add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
-        for other_cluster in self.unique_clusters:
-            if other_cluster != cluster:
-                cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
-                cur_closest_point = self.closest_points_inter[cluster, other_cluster]
-                cur_closest_pair = (-1, -1)
-                if cur_closest_point == idx_to_remove: #if point to be removed is closest for current, find new closest
-                    cur_closest_similarity = -np.inf
-                    for idx in self.selection_per_cluster[other_cluster]:
-                        for other_idx in new_selection:
-                            cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
+        if self.scale > 0:
+            for other_cluster in self.unique_clusters:
+                if other_cluster != cluster:
+                    cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
+                    cur_closest_point = self.closest_points_inter[cluster, other_cluster]
+                    cur_closest_pair = (-1, -1)
+                    if cur_closest_point == idx_to_remove: #if point to be removed is closest for current, find new closest
+                        cur_closest_similarity = -np.inf
+                        for idx in self.selection_per_cluster[other_cluster]:
+                            for other_idx in new_selection:
+                                cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
+                                if cur_similarity > cur_closest_similarity:
+                                    cur_closest_similarity = cur_similarity
+                                    cur_closest_pair = (other_idx, idx)
+                    else: #point to be removed is not closest, check if one of newly added points is closer
+                        for idx in self.selection_per_cluster[other_cluster]:
+                            cur_similarities = [(1.0 - get_distance(idx, idx_to_add, self.distances, self.num_points), idx_to_add) for idx_to_add in idxs_to_add]
+                            cur_similarity, idx_to_add = max(cur_similarities, key = lambda x: x[0])
                             if cur_similarity > cur_closest_similarity:
                                 cur_closest_similarity = cur_similarity
-                                cur_closest_pair = (other_idx, idx)
-                else: #point to be removed is not closest, check if one of newly added points is closer
-                    for idx in self.selection_per_cluster[other_cluster]:
-                        cur_similarities = [(1.0 - get_distance(idx, idx_to_add, self.distances, self.num_points), idx_to_add) for idx_to_add in idxs_to_add]
-                        cur_similarity, idx_to_add = max(cur_similarities, key = lambda x: x[0])
-                        if cur_similarity > cur_closest_similarity:
-                            cur_closest_similarity = cur_similarity
-                            cur_closest_pair = (idx_to_add, idx)
-                if cur_closest_pair[0] > -1:
-                    candidate_components[2] += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster] #update inter component
-                    add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
+                                cur_closest_pair = (idx_to_add, idx)
+                    if cur_closest_pair[0] > -1:
+                        candidate_components[2] += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster] #update inter component
+                        add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
 
         candidate_objective = np.longdouble(candidate_components[0] + candidate_components[1] + candidate_components[2] * self.scale) #final objective rescaled
         return candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters
@@ -538,25 +541,26 @@ class Solution:
         candidate_components = self.components.copy() 
         candidate_components[0] -= self.cost_per_cluster[cluster] #update selection component
 
-        # Calculate inter-cluster distances for all other clusters
+        # Calculate inter-cluster distances for all other clusters (only if scale > 0)
         # NOTE: Intra-cluster distances can only increase when removing a point, Thus if inter-cluster distances
         # increase, we can exit early.
         add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
-        for other_cluster in self.unique_clusters:
-            if other_cluster != cluster:
-                cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
-                cur_closest_point = self.closest_points_inter[cluster, other_cluster]
-                cur_closest_pair = (-1, -1)
-                if cur_closest_point == idx_to_remove:
-                    cur_closest_similarity = -np.inf
-                    for idx in self.selection_per_cluster[other_cluster]:
-                        for other_idx in new_selection:
-                            cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
-                            if cur_similarity > cur_closest_similarity:
-                                cur_closest_similarity = cur_similarity
-                                cur_closest_pair = (other_idx, idx)
-                    candidate_components[2] += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster] #update inter component
-                    add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
+        if self.scale > 0:
+            for other_cluster in self.unique_clusters:
+                if other_cluster != cluster:
+                    cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
+                    cur_closest_point = self.closest_points_inter[cluster, other_cluster]
+                    cur_closest_pair = (-1, -1)
+                    if cur_closest_point == idx_to_remove:
+                        cur_closest_similarity = -np.inf
+                        for idx in self.selection_per_cluster[other_cluster]:
+                            for other_idx in new_selection:
+                                cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
+                                if cur_similarity > cur_closest_similarity:
+                                    cur_closest_similarity = cur_similarity
+                                    cur_closest_pair = (other_idx, idx)
+                        candidate_components[2] += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster] #update inter component
+                        add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
         
         # Calculate intra-cluster distances
         add_within_cluster = [] #this stores changes that have to be made if the objective improves
@@ -1080,11 +1084,22 @@ class Solution:
         if self.feasible != other.feasible:
             print("Feasibilities are not equal.")
             return False
+        # Check if scales are equal
+        if not math.isclose(self.scale, other.scale, rel_tol=PRECISION_THRESHOLD):
+            print("Scales are not equal.")
+            return False
         # Check if objectives are equal
         if not math.isclose(self.objective, other.objective, rel_tol=PRECISION_THRESHOLD):
             print("Objectives are not equal.")
             return False
-
+        # Check if components are equal
+        try:
+            if not np.allclose(self.components, other.components, atol=PRECISION_THRESHOLD):
+                print("Components are not equal.")
+                return False
+        except:
+            print("Components could not be compared.")
+            return False
         return True
 
     # Objective decomposition

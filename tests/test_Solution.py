@@ -60,7 +60,7 @@ def test_evaluate_add_small_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -70,7 +70,7 @@ def test_evaluate_add_small_1():
         (0, (idx_to_add, 0), 0.9),  # Cluster 0, point 1 in cluster 0, point 2 in cluster 1
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -78,7 +78,9 @@ def test_evaluate_add_small_1():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
-    
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
+
 def test_evaluate_add_small_2():
     """Test the evaluation of adding a point to a small solution."""
     distances = DISTANCES_SMALL
@@ -91,7 +93,7 @@ def test_evaluate_add_small_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -100,7 +102,7 @@ def test_evaluate_add_small_2():
     expected_inter_changes = [
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -108,6 +110,8 @@ def test_evaluate_add_small_2():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_add_medium_1():
     """Test the evaluation of adding a point to a medium solution."""
@@ -121,7 +125,7 @@ def test_evaluate_add_medium_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -132,7 +136,7 @@ def test_evaluate_add_medium_1():
         (1, (idx_to_add, 3), 0.5)
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -140,6 +144,8 @@ def test_evaluate_add_medium_1():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_add_medium_2():
     """Test the evaluation of adding a point to a medium solution."""
@@ -153,7 +159,7 @@ def test_evaluate_add_medium_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -162,7 +168,7 @@ def test_evaluate_add_medium_2():
     expected_inter_changes = [
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -170,6 +176,8 @@ def test_evaluate_add_medium_2():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_add_medium_3():
     """Test the evaluation of adding a point to a medium solution."""
@@ -183,7 +191,7 @@ def test_evaluate_add_medium_3():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -193,7 +201,7 @@ def test_evaluate_add_medium_3():
     expected_inter_changes = [
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -201,6 +209,8 @@ def test_evaluate_add_medium_3():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_add_large_1():
     """Test the evaluation of adding a point to a large solution."""
@@ -214,7 +224,7 @@ def test_evaluate_add_large_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -227,7 +237,7 @@ def test_evaluate_add_large_1():
         (3, (idx_to_add, 9), 0.8)
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -235,6 +245,8 @@ def test_evaluate_add_large_1():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_add_large_2():
     """Test the evaluation of adding a point to a large solution."""
@@ -248,7 +260,7 @@ def test_evaluate_add_large_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -258,7 +270,7 @@ def test_evaluate_add_large_2():
     expected_inter_changes = [
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_add(idx_to_add)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -266,6 +278,8 @@ def test_evaluate_add_large_2():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 # TESTS FOR "accept_move" METHOD (add)
 def test_accept_add_small_1():
@@ -279,8 +293,8 @@ def test_accept_add_small_1():
     new_selection[idx_to_add] = True
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -298,8 +312,8 @@ def test_accept_add_small_2():
     new_selection[idx_to_add] = True
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -317,8 +331,8 @@ def test_accept_add_medium_1():
     new_selection[idx_to_add] = True
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -336,8 +350,8 @@ def test_accept_add_medium_2():
     new_selection[idx_to_add] = True
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -355,8 +369,8 @@ def test_accept_add_medium_3():
     new_selection[idx_to_add] = True
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -374,8 +388,8 @@ def test_accept_add_large_1():
     new_selection[idx_to_add] = True
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -393,8 +407,8 @@ def test_accept_add_large_2():
     new_selection[idx_to_add] = True
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
-    solution_object.accept_move([idx_to_add], [], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_add(idx_to_add)
+    solution_object.accept_move([idx_to_add], [], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -416,7 +430,7 @@ def test_evaluate_swap_small_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -427,7 +441,7 @@ def test_evaluate_swap_small_1():
         (0, (idx_to_add, 0), 0.9),  # Cluster 0, point 1 in cluster 0, point 2 in cluster 1
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -435,6 +449,8 @@ def test_evaluate_swap_small_1():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_swap_medium_1():
     """Test the evaluation of swapping a pair of points in a medium solution."""
@@ -450,7 +466,7 @@ def test_evaluate_swap_medium_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -460,7 +476,7 @@ def test_evaluate_swap_medium_1():
     expected_inter_changes = [
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -468,6 +484,8 @@ def test_evaluate_swap_medium_1():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_swap_medium_2():
     """Test the evaluation of swapping a pair of points in a medium solution."""
@@ -483,7 +501,7 @@ def test_evaluate_swap_medium_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -494,7 +512,7 @@ def test_evaluate_swap_medium_2():
         (1, (idx_to_add, 3), 0.5)
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -502,6 +520,8 @@ def test_evaluate_swap_medium_2():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_swap_medium_3():
     """Test the evaluation of swapping a pair of points in a medium solution."""
@@ -517,7 +537,7 @@ def test_evaluate_swap_medium_3():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -528,7 +548,7 @@ def test_evaluate_swap_medium_3():
         (0, (idx_to_add, 1), 0.8)
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -536,6 +556,8 @@ def test_evaluate_swap_medium_3():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_swap_large_1():
     """Test the evaluation of swapping a pair of points in a large solution."""
@@ -551,7 +573,7 @@ def test_evaluate_swap_large_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -565,7 +587,7 @@ def test_evaluate_swap_large_1():
         (3, (idx_to_add, 6), 0.2),
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -573,6 +595,8 @@ def test_evaluate_swap_large_1():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_swap_large_2():
     """Test the evaluation of swapping a pair of points in a large solution."""
@@ -588,7 +612,7 @@ def test_evaluate_swap_large_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -598,7 +622,7 @@ def test_evaluate_swap_large_2():
     expected_inter_changes = [
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -606,6 +630,8 @@ def test_evaluate_swap_large_2():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_swap_large_3():
     """Test the evaluation of swapping a pair of points in a large solution."""
@@ -621,7 +647,7 @@ def test_evaluate_swap_large_3():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -632,7 +658,7 @@ def test_evaluate_swap_large_3():
         (2, (idx_to_add, 4), 0.7),
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -640,6 +666,8 @@ def test_evaluate_swap_large_3():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 # TESTS FOR "accept_move" METHOD (swap)
 def test_accept_swap_small_1():
@@ -655,8 +683,8 @@ def test_accept_swap_small_1():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -676,8 +704,8 @@ def test_accept_swap_medium_1():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -697,8 +725,8 @@ def test_accept_swap_medium_2():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -718,8 +746,8 @@ def test_accept_swap_medium_3():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -739,8 +767,8 @@ def test_accept_swap_large_1():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -760,8 +788,8 @@ def test_accept_swap_large_2():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -781,8 +809,8 @@ def test_accept_swap_large_3():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
-    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_swap(idx_to_add, idx_to_remove)
+    solution_object.accept_move([idx_to_add], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -806,7 +834,7 @@ def test_evaluate_doubleswap_large_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -820,7 +848,7 @@ def test_evaluate_doubleswap_large_1():
         (3, (idx_to_add2, 6), 0.5),
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap([idx_to_add1, idx_to_add2], idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_swap([idx_to_add1, idx_to_add2], idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -828,6 +856,8 @@ def test_evaluate_doubleswap_large_1():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 # TESTS FOR "accept_move" METHOD (double swap)
 def test_accept_doubleswap_large_1():
@@ -845,8 +875,8 @@ def test_accept_doubleswap_large_1():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_swap([idx_to_add1, idx_to_add2], idx_to_remove)
-    solution_object.accept_move([idx_to_add1, idx_to_add2], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_swap([idx_to_add1, idx_to_add2], idx_to_remove)
+    solution_object.accept_move([idx_to_add1, idx_to_add2], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -866,7 +896,7 @@ def test_evaluate_remove_small_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -876,7 +906,7 @@ def test_evaluate_remove_small_1():
         (0, (2, 0), 0.7),
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_remove(idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -884,6 +914,8 @@ def test_evaluate_remove_small_1():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_remove_small_2():
     """Test the evaluation of removing a point from a small solution."""
@@ -897,7 +929,7 @@ def test_evaluate_remove_small_2():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -906,7 +938,7 @@ def test_evaluate_remove_small_2():
     expected_inter_changes = [
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_remove(idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -914,6 +946,8 @@ def test_evaluate_remove_small_2():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_remove_medium_1():
     """Test the evaluation of removing a point from a medium solution."""
@@ -927,7 +961,7 @@ def test_evaluate_remove_medium_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -936,7 +970,7 @@ def test_evaluate_remove_medium_1():
     expected_inter_changes = [
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_remove(idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -944,6 +978,8 @@ def test_evaluate_remove_medium_1():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 def test_evaluate_remove_large_1():
     """Test the evaluation of removing a point from a large solution."""
@@ -957,7 +993,7 @@ def test_evaluate_remove_large_1():
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
 
-    expected_candidate_objective, _ = calculate_objective(
+    expected_candidate_objective, expected_candidate_components = calculate_objective(
         new_selection, distances, clusters, selection_cost
     )
     expected_intra_changes = [
@@ -967,7 +1003,7 @@ def test_evaluate_remove_large_1():
     expected_inter_changes = [
     ]
 
-    actual_candidate_objective, actual_intra_changes, actual_inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    actual_candidate_objective, actual_candidate_components, actual_intra_changes, actual_inter_changes = solution_object.evaluate_remove(idx_to_remove)
 
     # Compare objective values
     np.testing.assert_almost_equal(actual_candidate_objective, expected_candidate_objective, decimal=TOLERANCE)
@@ -975,6 +1011,8 @@ def test_evaluate_remove_large_1():
     compare_intra_changes(actual_intra_changes, expected_intra_changes)
     # Compare inter changes
     compare_inter_changes(actual_inter_changes, expected_inter_changes)
+    # Compare components
+    np.testing.assert_almost_equal(actual_candidate_components, expected_candidate_components, decimal=TOLERANCE)
 
 # TESTS FOR "accept_move" METHOD (remove)
 def test_accept_remove_small_1():
@@ -988,8 +1026,8 @@ def test_accept_remove_small_1():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
-    solution_object.accept_move([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    solution_object.accept_move([], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -1007,8 +1045,8 @@ def test_accept_remove_small_2():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
-    solution_object.accept_move([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    solution_object.accept_move([], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -1026,8 +1064,8 @@ def test_accept_remove_medium_1():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
-    solution_object.accept_move([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    solution_object.accept_move([], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -1045,8 +1083,8 @@ def test_accept_remove_large_1():
     new_selection[idx_to_remove] = False
 
     solution_object = solution.Solution(distances, clusters, selection, selection_cost=selection_cost, seed=1234)
-    candidate_objective, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
-    solution_object.accept_move([], [idx_to_remove], candidate_objective, intra_changes, inter_changes)
+    candidate_objective, candidate_components, intra_changes, inter_changes = solution_object.evaluate_remove(idx_to_remove)
+    solution_object.accept_move([], [idx_to_remove], candidate_objective, candidate_components, intra_changes, inter_changes)
 
     expected_solution = solution.Solution(distances, clusters, new_selection, selection_cost=selection_cost, seed=1234)
 
@@ -1061,15 +1099,11 @@ def calculate_objective(selection, distances, clusters, cost_per_cluster):
         cost_per_cluster = np.array([cost_per_cluster] * len(np.unique(clusters)), dtype=np.float64)
 
     objective = 0.0
-    components = {
-        "selection": 0.0,
-        "intra": 0.0,
-        "inter": 0.0,
-    }
+    components = np.zeros(3, dtype=np.longdouble)
 
     # Assign cost for selecting
     for idx in np.where(selection)[0]:
-        components["selection"] += cost_per_cluster[clusters[idx]]
+        components[0] += cost_per_cluster[clusters[idx]]
         objective += cost_per_cluster[clusters[idx]]
 
     # Intra cluster costs
@@ -1081,7 +1115,7 @@ def calculate_objective(selection, distances, clusters, cost_per_cluster):
             intra_cost = np.inf
             for selected_idx in indices_selected:
                 intra_cost = min(intra_cost, distances[idx, selected_idx])
-            components["intra"] += intra_cost
+            components[1] += intra_cost
             objective += intra_cost
 
     # Inter cluster costs
@@ -1093,7 +1127,7 @@ def calculate_objective(selection, distances, clusters, cost_per_cluster):
         for idx1 in indices1:
             for idx2 in indices2:
                 inter_cost = max(inter_cost, 1.0 - distances[idx1, idx2])
-        components["inter"] += inter_cost
+        components[2] += inter_cost
         objective += inter_cost
 
     return objective, components
