@@ -36,6 +36,30 @@ _WORKER_SOL = None
 # Single processing solution class (stable)
 class Solution:
     def __init__(self, distances: np.ndarray, clusters: np.ndarray, selection: np.ndarray = None, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = None, seed=None):
+        """
+        Initialize a Solution object (non-shared memory version).
+
+        Parameters:
+        -----------
+        distances: numpy.ndarray or generator
+            Either a 2D distance matrix, OR a generator that yields (i, j, distance) tuples.
+            NOTE: The generator should yield all pairwise distances in condensed format (i.e. i and j are indices).
+        clusters: numpy.ndarray
+            A 1D array where clusters[i] represents the cluster assignment of point i.
+        selection: numpy.ndarray, optional
+            A 1D boolean array indicating which points are selected.
+        selection_cost: float
+            The cost associated with selecting a point.
+        cost_per_cluster: int
+            Defines how the cost of selecting a point in each cluster is calculated.
+        scale: float, optional
+            Scaling factor for inter-cluster distances in the objective function.
+            NOTE: If None, no scaling is applied.
+        seed: int or np.random.RandomState, optional
+            Random seed for reproducibility.
+
+        """
+        
         import types
         # Check if distances is a numpy array or a generator
         is_generator = isinstance(distances, types.GeneratorType)
@@ -91,7 +115,7 @@ class Solution:
         self.num_clusters = unique_clusters.shape[0]
         # If scale is set, re-scale to same range as intra-costs and multiply by provided scale
         if set_scale:
-            self.scale = scale * (self.num_points-self.num_clusters) / ((self.num_clusters * (self.num_clusters - 1)) / 2) #same scale as intra-cluster distances
+            self.scale = scale * (self.num_points - self.num_clusters) / ((self.num_clusters * (self.num_clusters - 1)) / 2) #same scale as intra-cluster distances
         else: #if no scale, use default of 1.0 (no re-scaling)
             self.scale = 1.0
 
@@ -143,7 +167,7 @@ class Solution:
         self.calculate_objective()
         
     @classmethod
-    def generate_centroid_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = 1e-3, seed=None):
+    def generate_centroid_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = None, seed=None):
         """
         Generates a Solution object with an initial solution by selecting the centroid for every cluster.
         NOTE: This currently only works if distances is provided as a full distance matrix.
@@ -192,7 +216,7 @@ class Solution:
         return cls(distances, clusters, selection=selection, selection_cost=selection_cost, cost_per_cluster=cost_per_cluster, scale=scale, seed=seed)
     
     @classmethod
-    def generate_random_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = 1e-3, max_fraction=0.1, seed=None):
+    def generate_random_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = None, max_fraction=0.1, seed=None):
         """
         Generates a Solution object with an initial solution by randomly selecting points.
 
@@ -301,6 +325,7 @@ class Solution:
         # Selection cost
         for idx in np.flatnonzero(self.selection):
             components[0] += self.cost_per_cluster[self.clusters[idx]]
+
         # Intra cluster distance costs
         for cluster in self.unique_clusters:
             for idx in self.nonselection_per_cluster[cluster]:
@@ -314,6 +339,7 @@ class Solution:
                 self.closest_distances_intra[idx] = AUXILIARY_DISTANCE_DTYPE(cur_min)
                 self.closest_points_intra[idx] = np.int32(cur_idx)
                 components[1] += cur_min
+
         # Inter cluster distance costs
         for cluster_1, cluster_2 in itertools.combinations(self.unique_clusters, 2):
             cur_max = -np.float64(np.inf)
@@ -331,7 +357,8 @@ class Solution:
             components[2] += cur_max
 
         self.components = components
-        self.objective = np.longdouble(components[0] + components[1] + components[2] * self.scale) #final objective rescaled
+        self.objective = np.longdouble(components[0] + components[1] + (components[2] * self.scale)) #final objective rescaled
+        return self.objective
 
     # Local search evaluation and acceptance methods
     def evaluate_add(self, idx_to_add: int):
@@ -342,15 +369,13 @@ class Solution:
         -----------
         idx_to_add: int
             The index of the point to be added.
-        local_search: bool
-            If True, the method will return (np.inf, None, None) if the candidate objective
-            is worse than the current objective, allowing for local search to skip unnecessary evaluations.
-            If False, it will always evaluate the addition.
         
         Returns:
         --------
         candidate_objective: float
             The objective value of the solution after the addition.
+        candidate_components: np.ndarray
+            The components of the objective after the addition.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
@@ -377,7 +402,6 @@ class Solution:
             if cur_dist < self.closest_distances_intra[idx]:
                 candidate_components[1] += cur_dist - self.closest_distances_intra[idx] #update intra component
                 add_within_cluster.append((idx, idx_to_add, cur_dist))
-
 
         # Calculate inter-cluster distances for other clusters (only if scale > 0)
         add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
@@ -414,6 +438,8 @@ class Solution:
         --------
         candidate_objective: float
             The objective value of the solution after the addition.
+        candidate_components: np.ndarray
+            The components of the objective after the swap.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
@@ -468,7 +494,7 @@ class Solution:
                 cur_dists = [(get_distance(idx, idx_to_add, self.distances, self.num_points), idx_to_add) for idx_to_add in idxs_to_add]
                 cur_dist, idx_to_add = min(cur_dists, key=lambda x: x[0])
                 if cur_dist < cur_closest_distance:
-                    candidate_components[1] += cur_dist - cur_closest_distance #update intra component
+                    candidate_components[1] += cur_dist - self.closest_distances_intra[idx] #update intra component
                     add_within_cluster.append((idx, idx_to_add, cur_dist))
 
         # Calculate inter-cluster distances for all other clusters (only if scale > 0)
@@ -509,15 +535,13 @@ class Solution:
         -----------
         idx_to_remove: int
             The index of the point to be removed.
-        local_search: bool
-            If True, the method will return (np.inf, None, None) if the candidate objective
-            is worse than the current objective, allowing for local search to skip unnecessary evaluations.
-            If False, it will always evaluate the removal.
         
         Returns:
         --------
         candidate_objective: float
             The objective value of the solution after the removal.
+        candidate_components: np.ndarray
+            The components of the objective after the removal.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
@@ -540,10 +564,23 @@ class Solution:
         # Calculate selection cost
         candidate_components = self.components.copy() 
         candidate_components[0] -= self.cost_per_cluster[cluster] #update selection component
+        
+        # Calculate intra-cluster distances
+        add_within_cluster = [] #this stores changes that have to be made if the objective improves
+        for idx in new_nonselection:
+            cur_closest_point = self.closest_points_intra[idx]
+            if cur_closest_point == idx_to_remove:
+                cur_closest_distance = np.inf
+                for other_idx in new_selection:
+                    if other_idx != idx:
+                        cur_dist = get_distance(idx, other_idx, self.distances, self.num_points)
+                        if cur_dist < cur_closest_distance:
+                            cur_closest_distance = cur_dist
+                            cur_closest_point = other_idx
+                candidate_components[1] += cur_closest_distance - self.closest_distances_intra[idx] #update intra component
+                add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
 
         # Calculate inter-cluster distances for all other clusters (only if scale > 0)
-        # NOTE: Intra-cluster distances can only increase when removing a point, Thus if inter-cluster distances
-        # increase, we can exit early.
         add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
         if self.scale > 0:
             for other_cluster in self.unique_clusters:
@@ -561,21 +598,6 @@ class Solution:
                                     cur_closest_pair = (other_idx, idx)
                         candidate_components[2] += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster] #update inter component
                         add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
-        
-        # Calculate intra-cluster distances
-        add_within_cluster = [] #this stores changes that have to be made if the objective improves
-        for idx in new_nonselection:
-            cur_closest_point = self.closest_points_intra[idx]
-            if cur_closest_point == idx_to_remove:
-                cur_closest_distance = np.inf
-                for other_idx in new_selection:
-                    if other_idx != idx:
-                        cur_dist = get_distance(idx, other_idx, self.distances, self.num_points)
-                        if cur_dist < cur_closest_distance:
-                            cur_closest_distance = cur_dist
-                            cur_closest_point = other_idx
-                candidate_components[1] += cur_closest_distance - self.closest_distances_intra[idx] #update intra component
-                add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
         
         candidate_objective = np.longdouble(candidate_components[0] + candidate_components[1] + candidate_components[2] * self.scale) #final objective rescaled
         return candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters
@@ -596,6 +618,8 @@ class Solution:
             NOTE: This assumes that all indices to be removed are in the same cluster (which should be the same as the indices to add)!
         candidate_objective: float
             The objective value of the solution after the move.
+        candidate_components: np.ndarray
+            The components of the objective after the move.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
@@ -795,10 +819,10 @@ class Solution:
 
     # Local search (single processing, for multiprocessing see Solution_shm)
     def local_search(self,
-                    max_iterations: int = 10_000, max_runtime: float = np.inf,
+                    max_iterations: int = np.inf, max_runtime: float = np.inf,
                     random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
                     doubleswap_time_threshold: float = 60.0,
-                    logging: bool = False, logging_frequency: int = 500,
+                    logging: bool = False, logging_frequency: int = 100,
                     ):
         """
         Perform local search to find a (local) optimal solution using a single processor. 
@@ -806,40 +830,35 @@ class Solution:
         Parameters:
         -----------
         max_iterations: int
-            The maximum number of iterations to perform.
+            The maximum number of iterations to perform. Default is infinity.
         max_runtime: float
-            The maximum runtime in seconds for the local search.
+            The maximum runtime in seconds for the local search. Default is infinity.
         random_move_order: bool
-            If True, the order of moves (add, swap, doubleswap,
-            remove) is randomized.
+            If True, the order of moves is randomized. Default is True.
         random_index_order: bool
-            If True, the order of indices for moves is randomized.
+            If True, the order of indices for moves is randomized. Default is True.
             NOTE: if random_move_order is True, but this is false,
-            all moves of a particular type will be tried before
-            moving to the next move type, but the order of moves
-            is random).
+            all moves of a particular type will be exhausted before moving to the next type,
+            but the order of moves is random.
         move_order: list
             If provided, this list will be used to determine the
             order of moves. If random_move_order is True, this
             list will be shuffled before use.
-            NOTE: this list should contain the following move types (as strings):
+            NOTE: this list should only contain the following move types (as strings):
                 - "add"
                 - "swap"
                 - "doubleswap"
                 - "remove"
-            NOTE: by leaving out a move type, it will not be
-            considered in the local search.
+            NOTE: by leaving out a move type, it will not be considered in the local search.
         doubleswap_time_threshold: float
-            The time threshold in seconds after which doubleswaps will no
-            longer be considered in the local search.
-            NOTE: this is on a per-iteration basis, so if an iteration
-            takes longer than this threshold, doubleswaps will be
-            skipped in current iteration, but re-added for the next iteration.
+            The time threshold in seconds after which double swap moves will no longer be considered.
+            Default is 60.0 seconds.
+            NOTE: this is on a per-iteration basis, so if an iteration takes longer than this threshold,
+            doubleswaps will be skipped in current iteration, but re-added for the next iteration.
         logging: bool
-            If True, information about the local search will be printed.
+            If True, information about the local search will be printed. Default is False.
         logging_frequency: int
-            If logging is True, information will be printed every
-            logging_frequency iterations.
+            If logging is True, information will be printed every logging_frequency iterations. Default is 100.
 
         Returns:
         --------
@@ -849,7 +868,7 @@ class Solution:
         objectives: list of floats
             The objective value after each iteration.
         """
-        # Validate input parameters
+        # Validate input
         if not isinstance(max_iterations, int) or max_iterations < 1:
             raise ValueError("max_iterations must be a positive integer.")
         if not isinstance(random_move_order, bool):
@@ -879,9 +898,13 @@ class Solution:
         objectives = []
         solution_changed = False
 
+        print(f"Starting local search with objective {self.objective:.6f}", flush=True)
         start_time = time.time()
         while iteration < max_iterations:
-            current_iteration_time = time.time()
+            if time.time() - start_time > max_runtime:
+                print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
+                break
+
             objectives.append(self.objective)
             solution_changed = False
 
@@ -897,25 +920,53 @@ class Solution:
                 elif move_type == "remove":
                     move_generator["remove"] = self.generate_indices_remove(random=random_index_order)
             active_moves = move_order.copy() #list of move types for this iteration
+
+            # Helper function for getting next task and handling doubleswap time threshold
+            def next_task():
+                """
+                Helper function to get the next task from the move generators.
+                """
+                while active_moves:
+                    if (time.time() - current_iteration_time) > doubleswap_time_threshold:
+                        if "doubleswap" in active_moves:
+                            print(f"Iteration {iteration}: Removed doubleswap moves due to time threshold exceeded ({time.time() - current_iteration_time:.2f} seconds).", flush=True)
+                            active_moves.remove("doubleswap")
+                        if not active_moves:
+                            return None, None
+                        
+                    # Select next move type and content
+                    if random_move_order:
+                        move_type = self.random_state.choice(active_moves)
+                    else:
+                        move_type = active_moves[0]
+                    try:
+                        move_content = next( move_generator[move_type] )
+                    except StopIteration: #clear move from generator if no more moves are available
+                        active_moves.remove(move_type)
+                        del move_generator[move_type]
+                        continue
+
+                    if move_type == "add":
+                        return MOVE_ADD, move_content
+                    elif move_type == "swap":
+                        return MOVE_SWAP, move_content
+                    elif move_type == "doubleswap":
+                        return MOVE_DSWAP, move_content
+                    elif move_type == "remove":
+                        return MOVE_REMOVE, move_content
+                    
+                return None, None
             
             move_counter = 0
-            while active_moves:
+            current_iteration_time = time.time()
+            while active_moves and not solution_changed:
                 # Select next move type
-                if random_move_order:
-                    selected_generator = self.random_state.choice(active_moves)
-                else:
-                    selected_generator = active_moves[0]
-                # Get next move from generator
-                try:
-                    move_content = next(move_generator[selected_generator])
-                    move_type = selected_generator
-                except StopIteration: #clear move from generator if no more moves are available
-                    active_moves.remove(selected_generator)
-                    del move_generator[selected_generator]
-                    continue
+                move_code, move_content = next_task()
+                if move_code is None:
+                    break #no more moves available
 
-                move_counter += 1
-                if move_type == "add":
+                # Evaluate move
+                if move_code == MOVE_ADD:
                     idx_to_add = move_content
                     idxs_to_add = [idx_to_add]
                     idxs_to_remove = []
@@ -923,52 +974,51 @@ class Solution:
                     if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
                         solution_changed = True
                         break
-                elif move_type == "swap" or move_type == "doubleswap":
+                elif move_code == MOVE_SWAP or move_code == MOVE_DSWAP:
                     idxs_to_add, idx_to_remove = move_content
                     idxs_to_remove = [idx_to_remove]
                     candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
                     if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
                         solution_changed = True
                         break
-                elif move_type == "remove":
-                    idxs_to_add = []
+                elif move_code == MOVE_REMOVE:
                     idx_to_remove = move_content
+                    idxs_to_add = []
                     idxs_to_remove = [idx_to_remove]
                     candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove)
                     if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
                         solution_changed = True
                         break
+                move_counter += 1
 
-                if move_counter % 1_000 == 0:
+                # Check runtime
+                if move_counter % 500 == 0:
                     # Check if total runtime exceeds max_runtime
                     if time.time() - start_time > max_runtime:
                         if logging:
-                            print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                            print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time} seconds). Stopping local search.", flush=True)
                         return time_per_iteration, objectives
-                    # Check if doubleswaps should be removed
-                    if time.time() - current_iteration_time > doubleswap_time_threshold and "doubleswap" in active_moves:
-                        active_moves.remove("doubleswap")
-                        del move_generator["doubleswap"]
-                        if logging:
-                            print(f"Iteration {iteration}: Removed doubleswap moves due to time threshold exceeded ({time.time() - current_iteration_time:.2f} seconds).", flush=True)
                         
 
-            time_per_iteration.append(time.time() - current_iteration_time)
             if solution_changed: # If improvement is found, update solution
                 self.accept_move(idxs_to_add, idxs_to_remove, candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters)
-                del idxs_to_add, idxs_to_remove #sanity check, should throw error if something weird happens
+                del idxs_to_add, idxs_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters #sanity check, should throw error if something weird happens
+                
+                # Update time tracking and iteration counter
+                time_per_iteration.append(time.time() - current_iteration_time)
                 iteration += 1
+
                 # Check if time exceeds allowed runtime
                 if time.time() - start_time > max_runtime:
                     if logging:
-                        print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time}), stopping local search.", flush=True)
+                        print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time} seconds). Stopping local search.", flush=True)
                     return time_per_iteration, objectives
-            else:
+            
+                if logging and (iteration % logging_frequency == 0):
+                    print(f"Iteration {iteration}: Objective = {self.objective:.10f} - selection_cost={self.components[0]:.10f}, intra-cost={self.components[1]:.10f}, inter-cost={self.components[2]:.10f}", flush=True)
+                    print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
+            else: #solution did not change -> local optimum found!
                 break
-
-            if iteration % logging_frequency == 0 and logging:
-                print(f"Iteration {iteration}: Objective = {self.objective:.10f} - selection_cost={self.components[0]:.10f}, intra-cost={self.components[1]:.10f}, inter-cost={self.components[2]:.10f}", flush=True)
-                print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
 
         return time_per_iteration, objectives
 
@@ -976,7 +1026,7 @@ class Solution:
     def __eq__(self, other):
         """
         Check if two solutions are equal.
-        NOTE: This purely checks if all attributes are equal, excluding the random state.
+        NOTE: This purely checks if all relevant attributes are equal, excluding the random state.
         """
         # Check if other is an instance of the same class
         if not isinstance(other, type(self)):
@@ -1006,16 +1056,8 @@ class Solution:
         except:
             print("Clusters could not be compared.")
             return False
-        # Check if unique clusters are equal
-        try:
-            if not np.array_equal(self.unique_clusters, other.unique_clusters):
-                print("Unique clusters are not equal.")
-                return False
-        except:
-            print("Unique clusters could not be compared.")
-            return False
         # Check if selection cost is equal
-        if not math.isclose(self.selection_cost, other.selection_cost, rel_tol=PRECISION_THRESHOLD):
+        if not np.isclose(self.selection_cost, other.selection_cost, rel_tol=PRECISION_THRESHOLD):
             print("Selection costs are not equal.")
             return False
         # Check if cost per cluster is equal
@@ -1026,26 +1068,6 @@ class Solution:
         except:
             print("Cost per cluster could not be compared.")
             return False
-        # Check if number of points is equal
-        if self.num_points != other.num_points:
-            print("Number of points is not equal.")
-            return False
-        # Check if selections per cluster are equal
-        if set(self.selection_per_cluster.keys()) != set(other.selection_per_cluster.keys()):
-            print("Selection per cluster keys are not equal.")
-            return False
-        for cluster in self.selection_per_cluster:
-            if self.selection_per_cluster[cluster] != other.selection_per_cluster[cluster]:
-                print(f"Selection in cluster {cluster} is not equal.")
-                return False
-        # Check if non-selections per cluster are equal
-        if set(self.nonselection_per_cluster.keys()) != set(other.nonselection_per_cluster.keys()):
-            print("Non-selection per cluster keys are not equal.")
-            return False
-        for cluster in self.nonselection_per_cluster:
-            if self.nonselection_per_cluster[cluster] != other.nonselection_per_cluster[cluster]:
-                print(f"Non-selection in cluster {cluster} is not equal.")
-                return False
         # Check if closest intra cluster distances are equal
         try:
             if not np.allclose(self.closest_distances_intra, other.closest_distances_intra, atol=PRECISION_THRESHOLD):
@@ -1080,16 +1102,12 @@ class Solution:
         except:
             print("Closest inter cluster points could not be compared.")
             return False
-        # Check if feasibilities are equal
-        if self.feasible != other.feasible:
-            print("Feasibilities are not equal.")
-            return False
         # Check if scales are equal
-        if not math.isclose(self.scale, other.scale, rel_tol=PRECISION_THRESHOLD):
+        if not np.isclose(self.scale, other.scale, rel_tol=PRECISION_THRESHOLD):
             print("Scales are not equal.")
             return False
         # Check if objectives are equal
-        if not math.isclose(self.objective, other.objective, rel_tol=PRECISION_THRESHOLD):
+        if not np.isclose(self.objective, other.objective, rel_tol=PRECISION_THRESHOLD):
             print("Objectives are not equal.")
             return False
         # Check if components are equal
@@ -1102,68 +1120,9 @@ class Solution:
             return False
         return True
 
-    # Objective decomposition
-    def decompose_objective(self, selection_cost: float):
-        """
-        Calculates the objective value of the solution decomposed into:
-            - selection cost
-            - intra cluster distance costs
-            - inter cluster distance costs
-        In addition, this method allows for another selection cost to be applied which
-        prevents having to re-initialize a Solution object
-        NOTE: If selection is not feasible, the objective value is set to np.inf
-        and some of the internal attributes will not be set.
-
-        Parameters:
-        -----------
-        selection_cost: float
-            The cost associated with selecting a point.
-            NOTE: for now this does not allow for custom definitions relating the selection
-            cost to the number of points in a cluster for example.
-
-        Returns:
-        --------
-        dict
-            A dictionary with the following keys:
-            - "selection": the total selection cost
-            - "intra": the total intra cluster distance cost
-            - "inter": the total inter cluster distance cost
-            If the solution is not feasible, returns None.
-        """
-        is_feasible = self.determine_feasibility()
-        cost = {
-            "selection": 0.0,
-            "intra": 0.0,
-            "inter": 0.0
-        }
-        if not is_feasible:
-            return None
-        # Selection costs
-        for idx in np.flatnonzero(self.selection):
-            cost["selection"] += selection_cost
-        # Intra cluster distance costs
-        for cluster in self.unique_clusters:
-            for idx in self.nonselection_per_cluster[cluster]:
-                cur_min = AUXILIARY_DISTANCE_DTYPE(np.inf)
-                for other_idx in sorted(list(self.selection_per_cluster[cluster])): #this is to ensure consistent ordering
-                    cur_dist = get_distance(idx, other_idx, self.distances, self.num_points)
-                    if cur_dist < cur_min:
-                        cur_min = cur_dist
-                cost["intra"] += cur_min
-        # Inter cluster distance costs
-        for cluster_1, cluster_2 in itertools.combinations(self.unique_clusters, 2):
-            cur_max = -AUXILIARY_DISTANCE_DTYPE(np.inf)
-            for point_1 in sorted(list(self.selection_per_cluster[cluster_1])): #this is to ensure consistent ordering
-                for point_2 in sorted(list(self.selection_per_cluster[cluster_2])): #this is to ensure consistent ordering
-                    cur_dist = 1.0 - get_distance(point_1, point_2, self.distances, self.num_points)
-                    if cur_dist > cur_max:
-                        cur_max = cur_dist
-            cost["inter"] += cur_max
-        return cost
-
 # Multiprocessing Solution class using shared memory (stable)
 class Solution_shm(Solution):
-    def __init__(self, distances, clusters: np.ndarray, selection: np.ndarray = None, selection_cost: float = 1.0, cost_per_cluster: int = 0, shm_prefix: str = None, seed=None):
+    def __init__(self, distances, clusters: np.ndarray, selection: np.ndarray = None, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = None, shm_prefix: str = None, seed=None):
         """
         Initialize a Solution object using shared memory arrays.
         
@@ -1180,6 +1139,9 @@ class Solution_shm(Solution):
             The cost associated with selecting a point.
         cost_per_cluster: int
             Defines how the cost of selecting a point in each cluster is calculated.
+        scale: float, optional
+            Scaling factor for inter-cluster distances in the objective function.
+            NOTE: If None, no scaling is applied.
         shm_prefix: str, optional
             Prefix for shared memory segment names. If None, a unique prefix is generated.
         seed: int or np.random.RandomState, optional
@@ -1208,6 +1170,17 @@ class Solution_shm(Solution):
                 raise TypeError("Selection must be a numpy array of booleans.")
         else:
             selection = np.zeros(clusters.shape[0], dtype=bool)
+        # If scale is provided, check if it is valid, otherwise use default (no scaling)
+        if scale is not None:
+            try:
+                scale = float(scale)
+                if scale < 0:
+                    raise ValueError("Scale must be non-negative.")
+                set_scale = True
+            except:
+                raise TypeError("Scale must be a float.")
+        else:
+            set_scale = False
 
         # Set random state for reproducibility
         if isinstance(seed, int):
@@ -1240,7 +1213,13 @@ class Solution_shm(Solution):
         self.original_clusters = unique_clusters #store original cluster ids for reference
         self._create_shm_array("num_selected_per_cluster", (unique_clusters.shape[0],), np.int64) #used to track feasibility of removal moves
         self.num_clusters = unique_clusters.shape[0]
-        
+        # If scale is set, re-scale to same range as intra-costs and multiply by provided scale
+        self._create_shm_array("scale", (1,), np.float64)
+        if set_scale:
+            self.scale[0] = scale * (self.num_points - self.num_clusters) / ((self.num_clusters * (self.num_clusters - 1)) / 2)
+        else:
+            self.scale[0] = 1.0
+
         # Calculate condensed distance matrix size
         condensed_size = (self.num_points * (self.num_points - 1)) // 2
         
@@ -1311,7 +1290,8 @@ class Solution_shm(Solution):
         self.cluster_offsets[1:] = np.cumsum(counts)
 
         # Calculate objective
-        self._create_shm_array("objective", (1,), np.float64)
+        self._create_shm_array("objective", (1,), np.longdouble)
+        self._create_shm_array("components", (3,), np.longdouble) #selection, intra, inter
         self.calculate_objective()
 
         # Create epoch counter
@@ -1379,7 +1359,9 @@ class Solution_shm(Solution):
         _attach("epoch", (1,), np.int64)
 
         # Attach objective
-        _attach("objective", (1,), np.float64)
+        _attach("scale", (1,), np.float64)
+        _attach("objective", (1,), np.longdouble)
+        _attach("components", (3,), np.longdouble)
 
         self.num_points = num_points
         self.num_clusters = num_clusters
@@ -1477,17 +1459,18 @@ class Solution_shm(Solution):
         is_feasible = self.determine_feasibility()
         if not is_feasible:
             self.feasible = False
-            self.objective[0] = np.float64(np.inf)
+            self.objective[0] = np.longdouble(np.inf)
             return self.objective
         self.feasible = True
 
         # Calculate objective value
         objective = 0.0
+        components = np.zeros(3, dtype=np.longdouble) #selection, intra, inter
 
         self.num_selected_per_cluster.fill(0)
         # Selection cost
         for idx in np.flatnonzero(self.selection):
-            objective += self.cost_per_cluster[self.clusters[idx]]
+            components[0] += self.cost_per_cluster[self.clusters[idx]]
             self.num_selected_per_cluster[self.clusters[idx]] += 1
 
         # Intra-cluster distance costs
@@ -1502,7 +1485,7 @@ class Solution_shm(Solution):
                         cur_idx = other_idx
                 self.closest_distances_intra[idx] = AUXILIARY_DISTANCE_DTYPE(cur_min)
                 self.closest_points_intra[idx] = np.int32(cur_idx)
-                objective += cur_min
+                components[1] += cur_min
 
         #Inter-cluster distance costs
         for cluster_1, cluster_2 in itertools.combinations(self.unique_clusters, 2):
@@ -1518,10 +1501,11 @@ class Solution_shm(Solution):
             self.closest_distances_inter[cluster_2, cluster_1] = cur_max
             self.closest_points_inter[cluster_1, cluster_2] = np.int32(cur_pair[0])
             self.closest_points_inter[cluster_2, cluster_1] = np.int32(cur_pair[1])
-            objective += cur_max
+            components[2] += cur_max
 
-        self.objective[0] = np.float64(objective)
-        return self.objective
+        self.components[:] = components
+        self.objective[0] = np.longdouble(components[0] + components[1] + components[2] * self.scale[0]) #final objective rescaled
+        return self.objective[0]
 
     # Cluster iterator methods (needed due to CSR representation)
     def iter_cluster_members(self, cluster: int):
@@ -1581,7 +1565,7 @@ class Solution_shm(Solution):
                 yield idx
 
     # Local search evaluation and acceptance methods
-    def evaluate_add(self, idx_to_add: int, local_search: bool = False, stop_event = None):
+    def evaluate_add(self, idx_to_add: int, stop_event = None):
         """
         Evaluates the effect of adding an unselected point to the solution.
 
@@ -1589,10 +1573,6 @@ class Solution_shm(Solution):
         -----------
         idx_to_add: int
             The index of the point to be added.
-        local_search: bool
-            If True, the method will return (np.inf, None, None) if the candidate objective
-            is worse than the current objective, allowing for local search to skip unnecessary evaluations.
-            If False, it will always evaluate the addition.
         stop_event: multiprocessing.Event, optional
             An optional event that can be used to signal early termination of the evaluation.
             If the event is set during evaluation, the method will return (np.inf, None, None).
@@ -1601,6 +1581,8 @@ class Solution_shm(Solution):
         --------
         candidate_objective: float
             The objective value of the solution after the addition.
+        candidate_components: np.ndarray
+            The components of the objective after the addition.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
@@ -1617,49 +1599,47 @@ class Solution_shm(Solution):
         
         # Check early stop event
         if stop_event is not None and stop_event.is_set():
-            return np.inf, None, None
+            return np.inf, None, None, None
 
         # Find current cluster
         cluster = self.clusters[idx_to_add]
 
         # Calculate selection cost
-        original_objective = self.objective[0]
-        candidate_objective = self.objective[0] + self.cost_per_cluster[cluster] # cost for adding the point
+        candidate_components = self.components.copy()
+        candidate_components[0] += self.cost_per_cluster[cluster]
 
         # Calculate intra-cluster distances
         add_within_cluster = [] #this stores changes that have to be made if the objective improves
         for i, idx in enumerate(self.iter_unselected(cluster)):
             if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
-                return np.inf, None, None
-            cur_dist = get_distance(idx, idx_to_add, self.distances, self.num_points) # distance to current point (idx)
+                return np.inf, None, None, None
+            cur_dist = get_distance(idx, idx_to_add, self.distances, self.num_points) #distance to current point (idx)
             if cur_dist < self.closest_distances_intra[idx]:
-                candidate_objective += cur_dist - self.closest_distances_intra[idx]
+                candidate_components[1] += cur_dist - self.closest_distances_intra[idx] #update intra component
                 add_within_cluster.append((idx, idx_to_add, cur_dist))
 
-        # NOTE: Inter-cluster distances can only increase when adding a point, so when doing local search we can exit here if objective is worse
-        if candidate_objective > original_objective and np.abs(candidate_objective - original_objective) > PRECISION_THRESHOLD and local_search:
-            return np.inf, None, None
-
-        # Calculate inter-cluster distances for other clusters
+        # Calculate inter-cluster distances for other clusters (only if scale > 0)
         add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
-        for other_cluster in self.unique_clusters:
-            if stop_event is not None and stop_event.is_set():
-                return np.inf, None, None
-            if other_cluster != cluster:
-                cur_max = self.closest_distances_inter[cluster, other_cluster]
-                cur_idx = -1
-                for i, idx in enumerate(self.iter_selected(other_cluster)):
-                    if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
-                        return np.inf, None, None
-                    cur_similarity = 1 - get_distance(idx, idx_to_add, self.distances, self.num_points) #this is the similarity, if it is more similar then change solution
-                    if cur_similarity > cur_max:
-                        cur_max = cur_similarity
-                        cur_idx = idx
-                if cur_idx > -1:
-                    candidate_objective += cur_max - self.closest_distances_inter[cluster, other_cluster]
-                    add_for_other_clusters.append((other_cluster, (idx_to_add, cur_idx), cur_max))
+        if self.scale[0] > 0:
+            for other_cluster in self.unique_clusters:
+                if stop_event is not None and stop_event.is_set():
+                    return np.inf, None, None, None
+                if other_cluster != cluster:
+                    cur_max = self.closest_distances_inter[cluster, other_cluster]
+                    cur_idx = -1
+                    for i, idx in enumerate(self.iter_selected(other_cluster)):
+                        if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                            return np.inf, None, None, None
+                        cur_similarity = 1 - get_distance(idx, idx_to_add, self.distances, self.num_points) #this is the similarity, if it is more similar then change solution
+                        if cur_similarity > cur_max:
+                            cur_max = cur_similarity
+                            cur_idx = idx
+                    if cur_idx > -1:
+                        candidate_components[2] += cur_max - self.closest_distances_inter[cluster, other_cluster] #update inter component
+                        add_for_other_clusters.append((other_cluster, (idx_to_add, cur_idx), cur_max))
 
-        return candidate_objective, add_within_cluster, add_for_other_clusters
+        candidate_objective = np.longdouble(candidate_components[0] + candidate_components[1] + candidate_components[2] * self.scale[0]) #final objective rescaled
+        return candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters
 
     def evaluate_swap(self, idxs_to_add, idx_to_remove: int, stop_event = None):
         """
@@ -1680,6 +1660,8 @@ class Solution_shm(Solution):
         --------
         candidate_objective: float
             The objective value of the solution after the addition.
+        candidate_components: np.ndarray
+            The components of the objective after the swap.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
@@ -1706,7 +1688,7 @@ class Solution_shm(Solution):
             
         # Check early stop event
         if stop_event is not None and stop_event.is_set():
-            return np.inf, None, None
+            return np.inf, None, None, None
             
         # Generate pool of alternative points to compare to
         new_selection = set(self.iter_selected(cluster))
@@ -1717,13 +1699,14 @@ class Solution_shm(Solution):
         new_nonselection.add(idx_to_remove)
 
         # Calculate selection cost
-        candidate_objective = self.objective[0] + (num_to_add - 1) * self.cost_per_cluster[cluster] #cost for swapping points
+        candidate_components = self.components.copy()
+        candidate_components[0] += (num_to_add - 1) * self.cost_per_cluster[cluster] #update selection component
 
         # Calculate intra-cluster distances
         add_within_cluster = [] #this stores changes that have to be made if the objective improves
         for i, idx in enumerate(new_nonselection):
             if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
-                return np.inf, None, None
+                return np.inf, None, None, None
             cur_closest_distance = self.closest_distances_intra[idx]
             cur_closest_point = self.closest_points_intra[idx]
             if cur_closest_point == idx_to_remove: #if point to be removed is closest for current, find new closest
@@ -1733,50 +1716,52 @@ class Solution_shm(Solution):
                     if cur_dist < cur_closest_distance:
                         cur_closest_distance = cur_dist
                         cur_closest_point = other_idx
-                candidate_objective += cur_closest_distance - self.closest_distances_intra[idx]
+                candidate_components[1] += cur_closest_distance - self.closest_distances_intra[idx] #update intra component
                 add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
             else: #point to be removed is not closest, check if one of newly added points is closer
                 cur_dists = [(get_distance(idx, idx_to_add, self.distances, self.num_points), idx_to_add) for idx_to_add in idxs_to_add]
                 cur_dist, idx_to_add = min(cur_dists, key=lambda x: x[0])
                 if cur_dist < cur_closest_distance:
-                    candidate_objective += cur_dist - cur_closest_distance
+                    candidate_components[1] += cur_dist - self.closest_distances_intra[idx] #update intra component
                     add_within_cluster.append((idx, idx_to_add, cur_dist))
 
-        # Calculate inter-cluster distances for all other clusters
+        # Calculate inter-cluster distances for all other clusters (only if scale > 0)
         add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
-        for other_cluster in self.unique_clusters:
-            if stop_event is not None and stop_event.is_set():
-                return np.inf, None, None
-            if other_cluster != cluster:
-                cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
-                cur_closest_point = self.closest_points_inter[cluster, other_cluster]
-                cur_closest_pair = (-1, -1)
-                if cur_closest_point == idx_to_remove: #if point to be removed is closest for current, find new closest
-                    cur_closest_similarity = -np.inf
-                    for i, idx in enumerate(self.iter_selected(other_cluster)):
-                        if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
-                            return np.inf, None, None
-                        for other_idx in new_selection:
-                            cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
+        if self.scale[0] > 0:
+            for other_cluster in self.unique_clusters:
+                if stop_event is not None and stop_event.is_set():
+                    return np.inf, None, None, None
+                if other_cluster != cluster:
+                    cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
+                    cur_closest_point = self.closest_points_inter[cluster, other_cluster]
+                    cur_closest_pair = (-1, -1)
+                    if cur_closest_point == idx_to_remove: #if point to be removed is closest for current, find new closest
+                        cur_closest_similarity = -np.inf
+                        for i, idx in enumerate(self.iter_selected(other_cluster)):
+                            if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                                return np.inf, None, None, None
+                            for other_idx in new_selection:
+                                cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
+                                if cur_similarity > cur_closest_similarity:
+                                    cur_closest_similarity = cur_similarity
+                                    cur_closest_pair = (other_idx, idx)
+                    else: #point to be removed is not closest, check if one of newly added points is closer
+                        for i, idx in enumerate(self.iter_selected(other_cluster)):
+                            if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                                return np.inf, None, None, None
+                            cur_similarities = [(1.0 - get_distance(idx, idx_to_add, self.distances, self.num_points), idx_to_add) for idx_to_add in idxs_to_add]
+                            cur_similarity, idx_to_add = max(cur_similarities, key = lambda x: x[0])
                             if cur_similarity > cur_closest_similarity:
                                 cur_closest_similarity = cur_similarity
-                                cur_closest_pair = (other_idx, idx)
-                else: #point to be removed is not closest, check if one of newly added points is closer
-                    for i, idx in enumerate(self.iter_selected(other_cluster)):
-                        if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
-                            return np.inf, None, None
-                        cur_similarities = [(1.0 - get_distance(idx, idx_to_add, self.distances, self.num_points), idx_to_add) for idx_to_add in idxs_to_add]
-                        cur_similarity, idx_to_add = max(cur_similarities, key = lambda x: x[0])
-                        if cur_similarity > cur_closest_similarity:
-                            cur_closest_similarity = cur_similarity
-                            cur_closest_pair = (idx_to_add, idx)
-                if cur_closest_pair[0] > -1:
-                    candidate_objective += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster]
-                    add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
+                                cur_closest_pair = (idx_to_add, idx)
+                    if cur_closest_pair[0] > -1:
+                        candidate_components[2] += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster] #update inter component
+                        add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
 
-        return candidate_objective, add_within_cluster, add_for_other_clusters
+        candidate_objective = np.longdouble(candidate_components[0] + candidate_components[1] + candidate_components[2] * self.scale[0]) #final objective rescaled
+        return candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters
 
-    def evaluate_remove(self, idx_to_remove: int, local_search: bool = False, stop_event = None):
+    def evaluate_remove(self, idx_to_remove: int, stop_event = None):
         """
         Evaluates the effect of removing a selected point from the solution.
 
@@ -1784,10 +1769,6 @@ class Solution_shm(Solution):
         -----------
         idx_to_remove: int
             The index of the point to be removed.
-        local_search: bool
-            If True, the method will return (np.inf, None, None) if the candidate objective
-            is worse than the current objective, allowing for local search to skip unnecessary evaluations.
-            If False, it will always evaluate the removal.
         stop_event: multiprocessing.Event, optional
             An optional event that can be used to signal early termination of the evaluation.
             If the event is set during evaluation, the method will return (np.inf, None, None).
@@ -1796,6 +1777,8 @@ class Solution_shm(Solution):
         --------
         candidate_objective: float
             The objective value of the solution after the removal.
+        candidate_components: np.ndarray
+            The components of the objective after the removal.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
@@ -1810,7 +1793,7 @@ class Solution_shm(Solution):
 
         # Check early stop event
         if stop_event is not None and stop_event.is_set():
-            return np.inf, None, None
+            return np.inf, None, None, None
         
         # Find current cluster
         cluster = self.clusters[idx_to_remove]
@@ -1822,57 +1805,53 @@ class Solution_shm(Solution):
         new_nonselection.add(idx_to_remove)
 
         # Calculate selection cost
-        original_objective = self.objective[0]
-        candidate_objective = self.objective[0] - self.cost_per_cluster[cluster]
+        candidate_components = self.components.copy()
+        candidate_components[0] -= self.cost_per_cluster[cluster] #update selection component
 
-        # Calculate inter-cluster distances for all other clusters
-        # NOTE: Intra-cluster distances can only increase when removing a point, Thus if inter-cluster distances
-        # increase, we can exit early.
-        add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
-        for other_cluster in self.unique_clusters:
-            if other_cluster != cluster:
-                cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
-                cur_closest_point = self.closest_points_inter[cluster, other_cluster]
-                cur_closest_pair = (-1, -1)
-                if cur_closest_point == idx_to_remove:
-                    cur_closest_similarity = -np.inf
-                    for i, idx in enumerate(self.iter_selected(other_cluster)):
-                        if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
-                            return np.inf, None, None
-                        for other_idx in new_selection:
-                            cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
-                            if cur_similarity > cur_closest_similarity:
-                                cur_closest_similarity = cur_similarity
-                                cur_closest_pair = (other_idx, idx)
-                    candidate_objective += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster]
-                    add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
-        
-        # NOTE: Intra-cluster distances can only increase when removing a point, so when doing local search we can exit here if objective is worse
-        if candidate_objective > original_objective and np.abs(candidate_objective - original_objective) > PRECISION_THRESHOLD and local_search:
-            return np.inf, None, None
-        
         # Calculate intra-cluster distances
         add_within_cluster = [] #this stores changes that have to be made if the objective improves
         for i, idx in enumerate(new_nonselection):
             if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
-                return np.inf, None, None
+                return np.inf, None, None, None
             cur_closest_point = self.closest_points_intra[idx]
             if cur_closest_point == idx_to_remove:
                 cur_closest_distance = np.inf
                 for j, other_idx in enumerate(new_selection):
                     if stop_event is not None and (j & 63)==0 and stop_event.is_set(): #check every 64 iterations
-                        return np.inf, None, None
+                        return np.inf, None, None, None
                     if other_idx != idx:
                         cur_dist = get_distance(idx, other_idx, self.distances, self.num_points)
                         if cur_dist < cur_closest_distance:
                             cur_closest_distance = cur_dist
                             cur_closest_point = other_idx
-                candidate_objective += cur_closest_distance - self.closest_distances_intra[idx]
+                candidate_components[1] += cur_closest_distance - self.closest_distances_intra[idx] #update intra component
                 add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
-        
-        return candidate_objective, add_within_cluster, add_for_other_clusters
 
-    def accept_move(self, idxs_to_add: list, idxs_to_remove: list, candidate_objective: float, add_within_cluster: list, add_for_other_clusters: list):
+        # Calculate inter-cluster distances for all other clusters (only if scale > 0)
+        add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
+        if self.scale[0] > 0:
+            for other_cluster in self.unique_clusters:
+                if other_cluster != cluster:
+                    cur_closest_similarity = self.closest_distances_inter[cluster, other_cluster]
+                    cur_closest_point = self.closest_points_inter[cluster, other_cluster]
+                    cur_closest_pair = (-1, -1)
+                    if cur_closest_point == idx_to_remove:
+                        cur_closest_similarity = -np.inf
+                        for i, idx in enumerate(self.iter_selected(other_cluster)):
+                            if stop_event is not None and (i & 63)==0 and stop_event.is_set(): #check every 64 iterations
+                                return np.inf, None, None, None
+                            for other_idx in new_selection:
+                                cur_similarity = 1.0 - get_distance(idx, other_idx, self.distances, self.num_points)
+                                if cur_similarity > cur_closest_similarity:
+                                    cur_closest_similarity = cur_similarity
+                                    cur_closest_pair = (other_idx, idx)
+                        candidate_components[2] += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster] #update inter component
+                        add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
+        
+        candidate_objective = np.longdouble(candidate_components[0] + candidate_components[1] + candidate_components[2] * self.scale[0]) #final objective rescaled
+        return candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters
+
+    def accept_move(self, idxs_to_add: list, idxs_to_remove: list, candidate_objective: float, candidate_components: np.ndarray, add_within_cluster: list, add_for_other_clusters: list):
         """
         Accepts a move to the solution, where multiple points can be added and removed at once.
         NOTE: This assumes that the initial solution and the move
@@ -1888,6 +1867,8 @@ class Solution_shm(Solution):
             NOTE: This assumes that all indices to be removed are in the same cluster (which should be the same as the indices to add)!
         candidate_objective: float
             The objective value of the solution after the move.
+        candidate_components: np.ndarray
+            The components of the objective after the move.
         add_within_cluster: list of tuples
             The changes to be made within the cluster of the added point.
             Structure: [(index_to_change, new_closest_point, new_distance)]
@@ -1919,6 +1900,7 @@ class Solution_shm(Solution):
             self.closest_points_inter[cluster, other_cluster] = closest_point_this_cluster
             self.closest_points_inter[other_cluster, cluster] = closest_point_other_cluster
 
+        self.components[:] = candidate_components
         self.objective[0] = candidate_objective
 
     # Local search move generation methods
@@ -2104,12 +2086,12 @@ class Solution_shm(Solution):
     # Local search (multiprocessing, for single processing see Solution)
     def local_search(self,
                     num_processes: int = 2,
-                    max_iterations: int = 10_000, max_runtime: float = np.inf,
+                    max_iterations: int = np.inf, max_runtime: float = np.inf,
                     random_move_order: bool = True, random_index_order: bool = True, move_order: list = ["add", "swap", "doubleswap", "remove"],
                     doubleswap_time_threshold: float = 60.0,
                     task_queue_size: int = 2000,
                     mp_switch_threshold: float = 10.0,
-                    logging: bool = False, logging_frequency: int = 500,
+                    logging: bool = False, logging_frequency: int = 100,
                     ):
         """
         Perform local search to find a (local) optimal solution using multiple processes.
@@ -2123,12 +2105,11 @@ class Solution_shm(Solution):
         num_processes: int
             The number of worker processes to use for local search. Default is 2.
         max_iterations: int
-            The maximum number of iterations to perform. Default is 10,000.
+            The maximum number of iterations to perform. Default is infinity.
         max_runtime: float
             The maximum runtime in seconds for the local search. Default is infinity.
         random_move_order: bool
-            If True, the order of moves (add, swap, doubleswap,
-            remove) is randomized. Default is True.
+            If True, the order of moves is randomized. Default is True.
         random_index_order: bool
             If True, the order of indices for each move type is randomized. Default is True.
             NOTE: if random_move_order is True, but this is false,
@@ -2159,11 +2140,11 @@ class Solution_shm(Solution):
         logging: bool
             If True, information about the local search will be printed. Default is False.
         logging_frequency: int
-            If logging is True, information will be printed every logging_frequency iterations. Default is 500.
+            If logging is True, information will be printed every logging_frequency iterations. Default is 100.
 
         Returns:
         --------
-        time_per_ieration: list of floats
+        time_per_iteration: list of floats
             The time taken for each iteration.
             NOTE: this is primarily for logging purposes
         objectives: list of floats
@@ -2210,7 +2191,10 @@ class Solution_shm(Solution):
 
         if num_processes > 1:
             # Create context variables and main process variables
-            context = mp.get_context("spawn")
+            try:
+                context = mp.get_context("spawn")
+            except RuntimeError:
+                context = mp.get_context() #fallback to default if spawn not available
             stop_event = context.Event()
             task_q = context.Queue(maxsize=task_queue_size)
             result_q = context.Queue()
@@ -2292,6 +2276,7 @@ class Solution_shm(Solution):
                                 if not active_moves:
                                     return None, None
 
+                        # Select next move type and content
                         if random_move_order:
                             move_type = self.random_state.choice(active_moves)
                         else:
@@ -2334,14 +2319,14 @@ class Solution_shm(Solution):
                         idx_to_add = move_content
                         idxs_to_add = [idx_to_add]
                         idxs_to_remove = []
-                        candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=True)
+                        candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add)
                         if candidate_objective < self.objective[0] and abs(candidate_objective - self.objective[0]) > PRECISION_THRESHOLD:
                             solution_changed = True
                             break
                     elif move_code == MOVE_SWAP or move_code == MOVE_DSWAP:
                         idxs_to_add, idx_to_remove = move_content
                         idxs_to_remove = [idx_to_remove]
-                        candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
+                        candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
                         if candidate_objective < self.objective[0] and abs(candidate_objective - self.objective[0]) > PRECISION_THRESHOLD:
                             solution_changed = True
                             break
@@ -2349,7 +2334,7 @@ class Solution_shm(Solution):
                         idx_to_remove = move_content
                         idxs_to_add = []
                         idxs_to_remove = [idx_to_remove]
-                        candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=True)
+                        candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove)
                         if candidate_objective < self.objective[0] and abs(candidate_objective - self.objective[0]) > PRECISION_THRESHOLD:
                             solution_changed = True
                             break
@@ -2357,7 +2342,7 @@ class Solution_shm(Solution):
 
                     # Check runtime
                     if move_counter % 500 == 0:
-                        # Check max runtime
+                        # Check if total runtime exceeds max_runtime
                         if time.time() - start_time > max_runtime:
                             if logging:
                                 print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
@@ -2404,7 +2389,7 @@ class Solution_shm(Solution):
                         if time.time() - start_time > max_runtime:
                             return time_per_iteration, objectives
                         try:
-                            cur_epoch, cur_move_type, cur_move_data, candidate_objective = result_q.get(timeout=0.05)
+                            cur_epoch, cur_move_type, cur_move_data = result_q.get(timeout=0.05)
                         except Empty:
                             continue
 
@@ -2428,37 +2413,37 @@ class Solution_shm(Solution):
                             idx_to_add = cur_move_data
                             idxs_to_add = [idx_to_add]
                             idxs_to_remove = []
-                            candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=False)
+                            candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add)
                         elif cur_move_type == MOVE_SWAP or cur_move_type == MOVE_DSWAP:
                             idxs_to_add, idx_to_remove = cur_move_data
                             idxs_to_remove = [idx_to_remove]
-                            candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
+                            candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
                         elif cur_move_type == MOVE_REMOVE:
                             idx_to_remove = cur_move_data
                             idxs_to_add = []
                             idxs_to_remove = [idx_to_remove]
-                            candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=False)
+                            candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove)
 
                 # If solution changed (regardless of single or multiprocessing), accept the move
                 if solution_changed:
-                    self.accept_move(idxs_to_add, idxs_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
-                    del idxs_to_add, idxs_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters
+                    self.accept_move(idxs_to_add, idxs_to_remove, candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters)
+                    del idxs_to_add, idxs_to_remove, candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters #sanity check, should throw error if something weird happens
 
                     # Update time tracking and epoch/iteration counters
                     time_per_iteration.append(time.time() - current_iteration_time)
                     iteration += 1
                     self.epoch[0] += 1
 
+                    # Check if time exceeds allowed runtime
                     if time.time() - start_time > max_runtime:
                         if logging:
                             print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
                         return time_per_iteration, objectives
 
                     if logging and (iteration % logging_frequency == 0):
-                        print(f"Iteration {iteration}: Objective = {self.objective[0]:.10f}", flush=True)
+                        print(f"Iteration {iteration}: Objective = {self.objective[0]:.10f} - selection_cost={self.components[0]:.10f}, intra-cost={self.components[1]:.10f}, inter-cost={self.components[2]:.10f}", flush=True)
                         print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
-                # Solution did not change -> exit local search
-                else:
+                else: #solution did not change -> local optimum found!
                     break
 
             return time_per_iteration, objectives
@@ -2483,13 +2468,99 @@ class Solution_shm(Solution):
     def __eq__(self, other):
         """
         Check if two solutions are equal.
-        NOTE: This purely checks if all attributes are equal, excluding the random state.
-        NOTE: This is currently not finished!
+        NOTE: This purely checks if all relevant attributes are equal, excluding the random state and other shm-based properties.
         """
+        # Check if other is an instance of the same class
         if not isinstance(other, Solution_shm):
             return False
-        return True #TODO: finish implementation
-
+        # Check if selections are equal
+        try:
+            if not np.array_equal(self.selection, other.selection):
+                print("Selections are not equal.")
+                return False
+        except:
+            print("Selections could not be compared.")
+            return False
+        # Check if distances are equal
+        try:
+            if not np.allclose(self.distances, other.distances, atol=PRECISION_THRESHOLD):
+                print("Distances are not equal.")
+                return False
+        except:
+            print("Distances could not be compared.")
+            return False
+        # Check if clusters are equal
+        try:
+            if not np.array_equal(self.clusters, other.clusters):
+                print("Clusters are not equal.")
+                return False
+        except:
+            print("Clusters could not be compared.")
+            return False
+        # Check if selection cost is equal
+        if not np.isclose(self.selection_cost, other.selection_cost, atol=PRECISION_THRESHOLD):
+            print("Selection costs are not equal.")
+            return False
+        # Check if cost per cluster is equal
+        try:
+            if not np.allclose(self.cost_per_cluster, other.cost_per_cluster, atol=PRECISION_THRESHOLD):
+                print("Cost per cluster is not equal.")
+                return False
+        except:
+            print("Cost per cluster could not be compared.")
+            return False
+        # Check if closest intra cluster distances are equal
+        try:
+            if not np.allclose(self.closest_distances_intra, other.closest_distances_intra, atol=PRECISION_THRESHOLD):
+                print("Closest intra cluster distances are not equal.")
+                return False
+        except:
+            print("Closest intra cluster distances could not be compared.")
+            return False
+        # Check if closest intra cluster points are equal
+        try:
+            if not np.array_equal(self.closest_points_intra, other.closest_points_intra):
+                print("Closest intra cluster points are not equal.")
+                return False
+        except:
+            print("Closest intra cluster points could not be compared.")
+            return False
+        # Check if closest inter cluster distances are equal
+        try:
+            if not np.allclose(self.closest_distances_inter, other.closest_distances_inter, atol=PRECISION_THRESHOLD):
+                print("Closest inter cluster distances are not equal.")
+                return False
+        except:
+            print("Closest inter cluster distances could not be compared.")
+            return False
+        # Check if closest inter cluster points are equal
+        try:
+            if not np.array_equal(self.closest_points_inter, other.closest_points_inter):
+                print("Closest inter cluster points are not equal.")
+                print(self.closest_points_inter)
+                print(other.closest_points_inter)
+                return False
+        except:
+            print("Closest inter cluster points could not be compared.")
+            return False
+        # Check if scales are equal
+        if not np.isclose(self.scale[0], other.scale[0], atol=PRECISION_THRESHOLD):
+            print("Scales are not equal.")
+            return False
+        # Check if objectives are equal
+        if not np.isclose(self.objective[0], other.objective[0], atol=PRECISION_THRESHOLD):
+            print("Objectives are not equal.")
+            return False
+        # Check if components are equal
+        try:
+            if not np.allclose(self.components, other.components, atol=PRECISION_THRESHOLD):
+                print("Components are not equal.")
+                return False
+        except:
+            print("Components could not be compared.")
+            return False
+        return True
+        
 # Module-level functions
 def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, stop_event):
     """
@@ -2526,7 +2597,7 @@ def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, sto
             # Terminate if stop event is set
             if stop_event.is_set():
                 if move_code == MOVE_BATCH:
-                    result_q.put( (epoch, None, None, None)) #keep track of inflight tasks
+                    result_q.put( (epoch, None, None)) #keep track of inflight tasks
                 continue
 
             sol = _WORKER_SOL
@@ -2549,37 +2620,37 @@ def _shm_worker_main(shm_prefix, num_points, num_clusters, task_q, result_q, sto
 
                     if mc == MOVE_ADD:
                         idx_to_add = margs
-                        candidate_objective, _, _ = sol.evaluate_add(idx_to_add, local_search=True, stop_event=stop_event)
+                        candidate_objective, _, _, _ = sol.evaluate_add(idx_to_add, stop_event=stop_event)
                         if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
                             # Suppress potentially late publishing of moves from old epochs
                             final_epoch = sol.epoch[0] if sol.epoch is not None else -1
                             if (not stop_event.is_set()) and (epoch == final_epoch):
-                                result_q.put( (epoch, mc, idx_to_add, candidate_objective) )
+                                result_q.put( (epoch, mc, idx_to_add) )
                                 improved = True
                     elif mc == MOVE_SWAP or mc == MOVE_DSWAP:
                         idxs_to_add, idx_to_remove = margs
-                        candidate_objective, _, _ = sol.evaluate_swap(idxs_to_add, idx_to_remove, stop_event=stop_event)
+                        candidate_objective, _, _, _ = sol.evaluate_swap(idxs_to_add, idx_to_remove, stop_event=stop_event)
                         if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
                             # Suppress potentially late publishing of moves from old epochs
                             final_epoch = sol.epoch[0] if sol.epoch is not None else -1
                             if (not stop_event.is_set()) and (epoch == final_epoch):
-                                result_q.put( (epoch, mc, (idxs_to_add, idx_to_remove), candidate_objective) )
+                                result_q.put( (epoch, mc, (idxs_to_add, idx_to_remove)) )
                                 improved = True
                     elif mc == MOVE_REMOVE:
                         idx_to_remove = margs
-                        candidate_objective, _, _ = sol.evaluate_remove(idx_to_remove, local_search=True, stop_event=stop_event)
+                        candidate_objective, _, _, _ = sol.evaluate_remove(idx_to_remove, stop_event=stop_event)
                         if candidate_objective < cur_obj and abs(candidate_objective - cur_obj) > PRECISION_THRESHOLD:
                             # Suppress potentially late publishing of moves from old epochs
                             final_epoch = sol.epoch[0] if sol.epoch is not None else -1
                             if (not stop_event.is_set()) and (epoch == final_epoch):
-                                result_q.put( (epoch, mc, idx_to_remove, candidate_objective) )
+                                result_q.put( (epoch, mc, idx_to_remove) )
                                 improved = True
 
                     if improved: #if improving move is found, stop processing remaining moves in batch
                         break
 
                 if not improved:
-                    result_q.put( (epoch, None, None, None)) #keep track of inflight tasks
+                    result_q.put( (epoch, None, None)) #keep track of inflight tasks
                 continue
                 
     finally:
