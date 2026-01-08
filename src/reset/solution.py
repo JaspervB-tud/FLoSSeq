@@ -35,7 +35,7 @@ _WORKER_SOL = None
 
 # Single processing solution class (stable)
 class Solution:
-    def __init__(self, distances: np.ndarray, clusters: np.ndarray, selection: np.ndarray = None, selection_cost: float = 1.0, cost_per_cluster: int = 0, seed=None):
+    def __init__(self, distances: np.ndarray, clusters: np.ndarray, selection: np.ndarray = None, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = None, seed=None):
         import types
         # Check if distances is a numpy array or a generator
         is_generator = isinstance(distances, types.GeneratorType)
@@ -59,6 +59,17 @@ class Solution:
                 raise TypeError("Selection must be a numpy array of booleans.")
         else:
             selection = np.zeros(clusters.shape[0], dtype=bool)
+        # If scale is provided, check if it is valid, otherwise use default (no scaling)
+        if scale is not None:
+            try:
+                scale = float(scale)
+                if scale < 0:
+                    raise ValueError("Scale must be non-negative.")
+                set_scale = True
+            except:
+                raise TypeError("Scale must be a float.")
+        else:
+            set_scale = False
 
         # Set random state for reproducibility
         if isinstance(seed, int):
@@ -78,6 +89,11 @@ class Solution:
         self.unique_clusters = np.arange(unique_clusters.shape[0], dtype=np.int64)
         self.original_clusters = unique_clusters #store original cluster ids for reference
         self.num_clusters = unique_clusters.shape[0]
+        # If scale is set, re-scale to same range as intra-costs and multiply by provided scale
+        if set_scale:
+            self.intrinsic_scale = scale * (self.num_points-self.num_clusters) / ((self.num_clusters * (self.num_clusters - 1)) / 2) #same scale as intra-cluster distances
+        else: #if no scale, use default of 1.0 (no re-scaling)
+            self.intrinsic_scale = 1.0
 
         # If distances is array, copy directly
         if is_array:
@@ -127,7 +143,7 @@ class Solution:
         self.calculate_objective()
         
     @classmethod
-    def generate_centroid_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, seed=None):
+    def generate_centroid_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = 1e-3, seed=None):
         """
         Generates a Solution object with an initial solution by selecting the centroid for every cluster.
         NOTE: This currently only works if distances is provided as a full distance matrix.
@@ -173,10 +189,10 @@ class Solution:
             centroid = np.argmin(np.sum(cluster_distances, axis=1))
             selection[cluster_points[centroid]] = True
 
-        return cls(distances, clusters, selection=selection, selection_cost=selection_cost, cost_per_cluster=cost_per_cluster, seed=seed)
+        return cls(distances, clusters, selection=selection, selection_cost=selection_cost, cost_per_cluster=cost_per_cluster, scale=scale, seed=seed)
     
     @classmethod
-    def generate_random_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, max_fraction=0.1, seed=None):
+    def generate_random_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = 1e-3, max_fraction=0.1, seed=None):
         """
         Generates a Solution object with an initial solution by randomly selecting points.
 
@@ -234,7 +250,7 @@ class Solution:
         additional_points = random_state.choice(remaining_points, size=num_additional_points, replace=False)
         selection[additional_points] = True
 
-        return cls(distances, clusters, selection, selection_cost=selection_cost, cost_per_cluster=cost_per_cluster, seed=random_state)
+        return cls(distances, clusters, selection, selection_cost=selection_cost, cost_per_cluster=cost_per_cluster, scale=scale, seed=random_state)
 
     # Core state and feasibility methods
     def determine_feasibility(self):
@@ -281,10 +297,10 @@ class Solution:
         self.feasible = True
 
         # Calculate the objective value
-        objective = 0.0
+        components = np.zeros(3, dtype=np.longdouble) #selection, intra, inter
         # Selection cost
         for idx in np.flatnonzero(self.selection):
-            objective += self.cost_per_cluster[self.clusters[idx]]
+            components[0] += self.cost_per_cluster[self.clusters[idx]]
         # Intra cluster distance costs
         for cluster in self.unique_clusters:
             for idx in self.nonselection_per_cluster[cluster]:
@@ -297,7 +313,7 @@ class Solution:
                         cur_idx = other_idx
                 self.closest_distances_intra[idx] = AUXILIARY_DISTANCE_DTYPE(cur_min)
                 self.closest_points_intra[idx] = np.int32(cur_idx)
-                objective += cur_min
+                components[1] += cur_min
         # Inter cluster distance costs
         for cluster_1, cluster_2 in itertools.combinations(self.unique_clusters, 2):
             cur_max = -np.float64(np.inf)
@@ -312,11 +328,13 @@ class Solution:
             self.closest_distances_inter[cluster_2, cluster_1] = cur_max
             self.closest_points_inter[cluster_1, cluster_2] = cur_pair[0]
             self.closest_points_inter[cluster_2, cluster_1] = cur_pair[1]
-            objective += cur_max
-        self.objective = objective
+            components[2] += cur_max
+
+        self.components = components
+        self.objective = np.longdouble(components[0] + components[1] + components[2] * self.scale) #final objective rescaled
 
     # Local search evaluation and acceptance methods
-    def evaluate_add(self, idx_to_add: int, local_search=False):
+    def evaluate_add(self, idx_to_add: int):
         """
         Evaluates the effect of adding an unselected point to the solution.
 
@@ -349,19 +367,16 @@ class Solution:
         cluster = self.clusters[idx_to_add]
 
         # Calculate selection cost
-        candidate_objective = self.objective + self.cost_per_cluster[cluster] # cost for adding the point
+        candidate_components = self.components.copy()
+        candidate_components[0] += self.cost_per_cluster[cluster] #update selection component
 
         # Calculate intra-cluster distances
         add_within_cluster = [] #this stores changes that have to be made if the objective improves
         for idx in self.nonselection_per_cluster[cluster]:
-            cur_dist = get_distance(idx, idx_to_add, self.distances, self.num_points) # distance to current point (idx)
+            cur_dist = get_distance(idx, idx_to_add, self.distances, self.num_points) #distance to current point (idx)
             if cur_dist < self.closest_distances_intra[idx]:
-                candidate_objective += cur_dist - self.closest_distances_intra[idx]
+                candidate_components[1] += cur_dist - self.closest_distances_intra[idx] #update intra component
                 add_within_cluster.append((idx, idx_to_add, cur_dist))
-
-        # NOTE: Inter-cluster distances can only increase when adding a point, so when doing local search we can exit here if objective is worse
-        if candidate_objective > self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD and local_search:
-            return np.inf, None, None
 
         # Calculate inter-cluster distances for other clusters
         add_for_other_clusters = [] #this stores changes that have to be made if the objective improves
@@ -375,10 +390,11 @@ class Solution:
                         cur_max = cur_similarity
                         cur_idx = idx
                 if cur_idx > -1:
-                    candidate_objective += cur_max - self.closest_distances_inter[cluster, other_cluster]
+                    candidate_components[2] += cur_max - self.closest_distances_inter[cluster, other_cluster] #update inter component
                     add_for_other_clusters.append((other_cluster, (idx_to_add, cur_idx), cur_max))
 
-        return candidate_objective, add_within_cluster, add_for_other_clusters
+        candidate_objective = np.longdouble(candidate_components[0] + candidate_components[1] + candidate_components[2] * self.scale) #final objective rescaled
+        return candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters
 
     def evaluate_swap(self, idxs_to_add, idx_to_remove: int):
         """
@@ -429,7 +445,8 @@ class Solution:
         new_nonselection.add(idx_to_remove)
 
         # Calculate selection cost
-        candidate_objective = self.objective + (num_to_add - 1) * self.cost_per_cluster[cluster] #cost for swapping points
+        candidate_components = self.components.copy() 
+        candidate_components[0] += (num_to_add - 1) * self.cost_per_cluster[cluster] #update selection component
 
         # Calculate intra-cluster distances
         add_within_cluster = [] #this stores changes that have to be made if the objective improves
@@ -443,13 +460,13 @@ class Solution:
                     if cur_dist < cur_closest_distance:
                         cur_closest_distance = cur_dist
                         cur_closest_point = other_idx
-                candidate_objective += cur_closest_distance - self.closest_distances_intra[idx]
+                candidate_components[1] += cur_closest_distance - self.closest_distances_intra[idx] #update intra component
                 add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
             else: #point to be removed is not closest, check if one of newly added points is closer
                 cur_dists = [(get_distance(idx, idx_to_add, self.distances, self.num_points), idx_to_add) for idx_to_add in idxs_to_add]
                 cur_dist, idx_to_add = min(cur_dists, key=lambda x: x[0])
                 if cur_dist < cur_closest_distance:
-                    candidate_objective += cur_dist - cur_closest_distance
+                    candidate_components[1] += cur_dist - cur_closest_distance #update intra component
                     add_within_cluster.append((idx, idx_to_add, cur_dist))
 
         # Calculate inter-cluster distances for all other clusters
@@ -475,12 +492,13 @@ class Solution:
                             cur_closest_similarity = cur_similarity
                             cur_closest_pair = (idx_to_add, idx)
                 if cur_closest_pair[0] > -1:
-                    candidate_objective += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster]
+                    candidate_components[2] += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster] #update inter component
                     add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
 
-        return candidate_objective, add_within_cluster, add_for_other_clusters
+        candidate_objective = np.longdouble(candidate_components[0] + candidate_components[1] + candidate_components[2] * self.scale) #final objective rescaled
+        return candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters
 
-    def evaluate_remove(self, idx_to_remove: int, local_search: bool = False):
+    def evaluate_remove(self, idx_to_remove: int):
         """
         Evaluates the effect of removing a selected point from the solution.
 
@@ -517,7 +535,8 @@ class Solution:
         new_nonselection.add(idx_to_remove)
 
         # Calculate selection cost
-        candidate_objective = self.objective - self.cost_per_cluster[cluster]
+        candidate_components = self.components.copy() 
+        candidate_components[0] -= self.cost_per_cluster[cluster] #update selection component
 
         # Calculate inter-cluster distances for all other clusters
         # NOTE: Intra-cluster distances can only increase when removing a point, Thus if inter-cluster distances
@@ -536,12 +555,8 @@ class Solution:
                             if cur_similarity > cur_closest_similarity:
                                 cur_closest_similarity = cur_similarity
                                 cur_closest_pair = (other_idx, idx)
-                    candidate_objective += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster]
+                    candidate_components[2] += cur_closest_similarity - self.closest_distances_inter[cluster, other_cluster] #update inter component
                     add_for_other_clusters.append((other_cluster, cur_closest_pair, cur_closest_similarity))
-        
-        # NOTE: Intra-cluster distances can only increase when removing a point, so when doing local search we can exit here if objective is worse
-        if candidate_objective > self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD and local_search:
-            return np.inf, None, None
         
         # Calculate intra-cluster distances
         add_within_cluster = [] #this stores changes that have to be made if the objective improves
@@ -555,12 +570,13 @@ class Solution:
                         if cur_dist < cur_closest_distance:
                             cur_closest_distance = cur_dist
                             cur_closest_point = other_idx
-                candidate_objective += cur_closest_distance - self.closest_distances_intra[idx]
+                candidate_components[1] += cur_closest_distance - self.closest_distances_intra[idx] #update intra component
                 add_within_cluster.append((idx, cur_closest_point, cur_closest_distance))
         
-        return candidate_objective, add_within_cluster, add_for_other_clusters
+        candidate_objective = np.longdouble(candidate_components[0] + candidate_components[1] + candidate_components[2] * self.scale) #final objective rescaled
+        return candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters
 
-    def accept_move(self, idxs_to_add: list, idxs_to_remove: list, candidate_objective: float, add_within_cluster: list, add_for_other_clusters: list):
+    def accept_move(self, idxs_to_add: list, idxs_to_remove: list, candidate_objective: float, candidate_components: np.ndarray, add_within_cluster: list, add_for_other_clusters: list):
         """
         Accepts a move to the solution, where multiple points can be added and removed at once.
         NOTE: This assumes that the initial solution and the move
@@ -609,6 +625,7 @@ class Solution:
             self.closest_points_inter[cluster, other_cluster] = closest_point_this_cluster
             self.closest_points_inter[other_cluster, cluster] = closest_point_other_cluster
 
+        self.components = candidate_components
         self.objective = candidate_objective
 
     # Local search move generation methods
@@ -898,14 +915,14 @@ class Solution:
                     idx_to_add = move_content
                     idxs_to_add = [idx_to_add]
                     idxs_to_remove = []
-                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add, local_search=True)
+                    candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_add(idx_to_add)
                     if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
                         solution_changed = True
                         break
                 elif move_type == "swap" or move_type == "doubleswap":
                     idxs_to_add, idx_to_remove = move_content
                     idxs_to_remove = [idx_to_remove]
-                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
+                    candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_swap(idxs_to_add, idx_to_remove)
                     if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
                         solution_changed = True
                         break
@@ -913,7 +930,7 @@ class Solution:
                     idxs_to_add = []
                     idx_to_remove = move_content
                     idxs_to_remove = [idx_to_remove]
-                    candidate_objective, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove, local_search=True)
+                    candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters = self.evaluate_remove(idx_to_remove)
                     if candidate_objective < self.objective and np.abs(candidate_objective - self.objective) > PRECISION_THRESHOLD:
                         solution_changed = True
                         break
@@ -934,7 +951,7 @@ class Solution:
 
             time_per_iteration.append(time.time() - current_iteration_time)
             if solution_changed: # If improvement is found, update solution
-                self.accept_move(idxs_to_add, idxs_to_remove, candidate_objective, add_within_cluster, add_for_other_clusters)
+                self.accept_move(idxs_to_add, idxs_to_remove, candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters)
                 del idxs_to_add, idxs_to_remove #sanity check, should throw error if something weird happens
                 iteration += 1
                 # Check if time exceeds allowed runtime
@@ -946,7 +963,7 @@ class Solution:
                 break
 
             if iteration % logging_frequency == 0 and logging:
-                print(f"Iteration {iteration}: Objective = {self.objective:.10f}", flush=True)
+                print(f"Iteration {iteration}: Objective = {self.objective:.10f} - selection_cost={self.components[0]:.10f}, intra-cost={self.components[1]:.10f}, inter-cost={self.components[2]:.10f}", flush=True)
                 print(f"Average runtime last {logging_frequency} iterations: {np.mean(time_per_iteration[-logging_frequency:]):.6f} seconds", flush=True)
 
         return time_per_iteration, objectives
