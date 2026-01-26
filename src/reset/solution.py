@@ -829,7 +829,7 @@ class Solution:
         
         Parameters:
         -----------
-        max_iterations: int
+        max_iterations: int, float
             The maximum number of iterations to perform. Default is infinity.
         max_runtime: float
             The maximum runtime in seconds for the local search. Default is infinity.
@@ -869,8 +869,8 @@ class Solution:
             The objective value after each iteration.
         """
         # Validate input
-        if not isinstance(max_iterations, int) or max_iterations < 1:
-            raise ValueError("max_iterations must be a positive integer.")
+        if not isinstance(max_iterations, int) or not isinstance(max_iterations, float) or max_iterations < 1:
+            raise ValueError("max_iterations must be a positive value.")
         if not isinstance(random_move_order, bool):
             raise ValueError("random_move_order must be a boolean value.")
         if not isinstance(random_index_order, bool):
@@ -891,11 +891,16 @@ class Solution:
             raise ValueError("logging_frequency must be a positive integer.")  
         if not self.feasible:
             raise ValueError("The solution is infeasible, cannot perform local search.")
+
+        # Cast max_iterations to int if it is a float (unless it is infinity)
+        if isinstance(max_iterations, float) and not math.isinf(max_iterations):
+            max_iterations = int(max_iterations)
         
         # Initialize variables for tracking the local search progress
         iteration = 0
         time_per_iteration = []
         objectives = []
+        components = []
         solution_changed = False
 
         print(f"Starting local search with objective {self.objective:.6f}", flush=True)
@@ -906,6 +911,7 @@ class Solution:
                 break
 
             objectives.append(self.objective)
+            components.append(self.components.copy())
             solution_changed = False
 
             # Create move generators for every movetype so doubleswaps can be removed if needed
@@ -997,7 +1003,7 @@ class Solution:
                     if time.time() - start_time > max_runtime:
                         if logging:
                             print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time} seconds). Stopping local search.", flush=True)
-                        return time_per_iteration, objectives
+                        return time_per_iteration, objectives, components
                         
 
             if solution_changed: # If improvement is found, update solution
@@ -1012,7 +1018,7 @@ class Solution:
                 if time.time() - start_time > max_runtime:
                     if logging:
                         print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time} seconds). Stopping local search.", flush=True)
-                    return time_per_iteration, objectives
+                    return time_per_iteration, objectives, components
             
                 if logging and (iteration % logging_frequency == 0):
                     print(f"Iteration {iteration}: Objective = {self.objective:.10f} - selection_cost={self.components[0]:.10f}, intra-cost={self.components[1]:.10f}, inter-cost={self.components[2]:.10f}", flush=True)
@@ -1020,7 +1026,7 @@ class Solution:
             else: #solution did not change -> local optimum found!
                 break
 
-        return time_per_iteration, objectives
+        return time_per_iteration, objectives, components
 
     # Equality check
     def __eq__(self, other):
@@ -2104,7 +2110,7 @@ class Solution_shm(Solution):
         -----------
         num_processes: int
             The number of worker processes to use for local search. Default is 2.
-        max_iterations: int
+        max_iterations: int, float
             The maximum number of iterations to perform. Default is infinity.
         max_runtime: float
             The maximum runtime in seconds for the local search. Default is infinity.
@@ -2153,8 +2159,8 @@ class Solution_shm(Solution):
         # Validate input
         if not isinstance(num_processes, int) or num_processes < 1:
             raise ValueError("num_processes must be an integer greater than 0.")
-        if not isinstance(max_iterations, int) or max_iterations < 1:
-            raise ValueError("max_iterations must be a positive integer.")
+        if not isinstance(max_iterations, int) or not isinstance(max_iterations, float) or max_iterations < 1:
+            raise ValueError("max_iterations must be a positive value.")
         if not isinstance(random_move_order, bool):
             raise ValueError("random_move_order must be a boolean value.")
         if not isinstance(random_index_order, bool):
@@ -2179,6 +2185,10 @@ class Solution_shm(Solution):
             raise ValueError("logging_frequency must be a positive integer.")  
         if not self.feasible:
             raise ValueError("The solution is infeasible, cannot perform local search.")
+        
+        # Cast max_iterations to int if it is a float (unless it is infinity)
+        if isinstance(max_iterations, float) and not math.isinf(max_iterations):
+            max_iterations = int(max_iterations)
 
         # Create epoch tag
         self.epoch[0] = 0
@@ -2232,6 +2242,7 @@ class Solution_shm(Solution):
             iteration = 0
             time_per_iteration = []
             objectives = []
+            components = []
             solution_changed = False
 
             start_time = time.time()
@@ -2241,6 +2252,7 @@ class Solution_shm(Solution):
                     break
 
                 objectives.append(self.objective[0])
+                components.append(self.components.copy())
                 solution_changed = False
                 using_mp = False
 
@@ -2346,7 +2358,7 @@ class Solution_shm(Solution):
                         if time.time() - start_time > max_runtime:
                             if logging:
                                 print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
-                            return time_per_iteration, objectives
+                            return time_per_iteration, objectives, components
 
 
                 # Phase 2: multiprocessing
@@ -2387,7 +2399,7 @@ class Solution_shm(Solution):
 
                         # Wait for worker results
                         if time.time() - start_time > max_runtime:
-                            return time_per_iteration, objectives
+                            return time_per_iteration, objectives, components
                         try:
                             cur_epoch, cur_move_type, cur_move_data = result_q.get(timeout=0.05)
                         except Empty:
@@ -2438,7 +2450,7 @@ class Solution_shm(Solution):
                     if time.time() - start_time > max_runtime:
                         if logging:
                             print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
-                        return time_per_iteration, objectives
+                        return time_per_iteration, objectives, components
 
                     if logging and (iteration % logging_frequency == 0):
                         print(f"Iteration {iteration}: Objective = {self.objective[0]:.10f} - selection_cost={self.components[0]:.10f}, intra-cost={self.components[1]:.10f}, inter-cost={self.components[2]:.10f}", flush=True)
@@ -2446,7 +2458,7 @@ class Solution_shm(Solution):
                 else: #solution did not change -> local optimum found!
                     break
 
-            return time_per_iteration, objectives
+            return time_per_iteration, objectives, components
         
         finally:
             # Terminate workers
@@ -2784,6 +2796,7 @@ def main():
     parser.add_argument("--metadata", type=str, required=True, help="Path to metadata file.")
     parser.add_argument("--sequences_mapping", type=str, required=True, help="Path to sequences mapping file.")
     parser.add_argument("--distances", type=str, required=True, help="Path to distances file.")
+    parser.add_argument("--scale", type=float, default=None, help="Scale factor for inter-cluster costs in objective. If not set, scale is ommited (default behavior).")
     parser.add_argument("--mash", action="store_true", help="Use Mash distances if set, otherwise use sourmash distances.")
     parser.add_argument("--jaccard", action="store_true", help="Use Jaccard distances for sourmash if set, otherwise use cosine distances.")
     parser.add_argument("--selection_cost", type=float, default=1.0, help="Selection cost per selected point.")
@@ -2827,6 +2840,7 @@ def main():
                 clusters=clusters,
                 selection_cost=args.selection_cost,
                 cost_per_cluster=0, #use standard cost per cluster (cost for selecting is equal to selection cost)
+                scale=args.scale, #if not provided, use default behavior
                 max_fraction=args.max_fraction,
                 seed=args.seed
             )
@@ -2836,6 +2850,7 @@ def main():
                 clusters=clusters,
                 selection_cost=args.selection_cost,
                 cost_per_cluster=0, #use standard cost per cluster (cost for selecting is equal to selection cost)
+                scale=args.scale, #if not provided, use default behavior
                 max_fraction=args.max_fraction,
                 seed=args.seed
             )
