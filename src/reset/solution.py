@@ -869,7 +869,7 @@ class Solution:
             The objective value after each iteration.
         """
         # Validate input
-        if not isinstance(max_iterations, int) or not isinstance(max_iterations, float) or max_iterations < 1:
+        if not isinstance(max_iterations, (int, float)) or max_iterations < 1:
             raise ValueError("max_iterations must be a positive value.")
         if not isinstance(random_move_order, bool):
             raise ValueError("random_move_order must be a boolean value.")
@@ -2159,7 +2159,7 @@ class Solution_shm(Solution):
         # Validate input
         if not isinstance(num_processes, int) or num_processes < 1:
             raise ValueError("num_processes must be an integer greater than 0.")
-        if not isinstance(max_iterations, int) or not isinstance(max_iterations, float) or max_iterations < 1:
+        if not isinstance(max_iterations, (int, float)) or max_iterations < 1:
             raise ValueError("max_iterations must be a positive value.")
         if not isinstance(random_move_order, bool):
             raise ValueError("random_move_order must be a boolean value.")
