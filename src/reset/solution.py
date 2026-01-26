@@ -898,9 +898,9 @@ class Solution:
         
         # Initialize variables for tracking the local search progress
         iteration = 0
-        time_per_iteration = []
-        objectives = []
-        components = []
+        time_per_iteration = [0.0]
+        objectives = [self.objective]
+        components = [self.components.copy()]
         solution_changed = False
 
         print(f"Starting local search with objective {self.objective:.6f}", flush=True)
@@ -910,8 +910,6 @@ class Solution:
                 print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
                 break
 
-            objectives.append(self.objective)
-            components.append(self.components.copy())
             solution_changed = False
 
             # Create move generators for every movetype so doubleswaps can be removed if needed
@@ -1012,6 +1010,8 @@ class Solution:
                 
                 # Update time tracking and iteration counter
                 time_per_iteration.append(time.time() - current_iteration_time)
+                objectives.append(self.objective)
+                components.append(self.components.copy())
                 iteration += 1
 
                 # Check if time exceeds allowed runtime
@@ -2155,6 +2155,8 @@ class Solution_shm(Solution):
             NOTE: this is primarily for logging purposes
         objectives: list of floats
             The objective value after each iteration.
+        components: list of np.ndarray
+            The components of the objective after each iteration.
         """
         # Validate input
         if not isinstance(num_processes, int) or num_processes < 1:
@@ -2240,9 +2242,9 @@ class Solution_shm(Solution):
         # Main local search loop
         try:
             iteration = 0
-            time_per_iteration = []
-            objectives = []
-            components = []
+            time_per_iteration = [0.0]
+            objectives = [self.objective[0]]
+            components = [self.components.copy()]
             solution_changed = False
 
             start_time = time.time()
@@ -2251,8 +2253,6 @@ class Solution_shm(Solution):
                     print(f"Max runtime of {max_runtime} seconds exceeded ({time.time() - start_time:.2f} seconds). Stopping local search.", flush=True)
                     break
 
-                objectives.append(self.objective[0])
-                components.append(self.components.copy())
                 solution_changed = False
                 using_mp = False
 
@@ -2443,6 +2443,8 @@ class Solution_shm(Solution):
 
                     # Update time tracking and epoch/iteration counters
                     time_per_iteration.append(time.time() - current_iteration_time)
+                    objectives.append(self.objective[0])
+                    components.append(self.components.copy())
                     iteration += 1
                     self.epoch[0] += 1
 
