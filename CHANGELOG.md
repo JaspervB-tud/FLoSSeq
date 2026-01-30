@@ -2,6 +2,10 @@
 All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
 
+## [1.2.1] - 30/01/2026
+### Changed
+- Moved the epoch update to happen directly when entering the acceptance phase in Solution_shm to prevent race conditions in workers to accidentally try moves.
+
 ## [1.2.0] - 09/01/2026
 ### Added
 - Added objective function normalization (using scale factor) which re-weighs inter-cluster costs in order to balance.

@@ -1700,7 +1700,10 @@ class Solution_shm(Solution):
         new_selection = set(self.iter_selected(cluster))
         for idx in idxs_to_add:
             new_selection.add(idx)
-        new_selection.remove(idx_to_remove)
+        try:
+            new_selection.remove(idx_to_remove)
+        except KeyError: #this might occur due to race conditions, do not raise error, but return inf
+            return np.inf, None, None, None
         new_nonselection = set(self.iter_unselected(cluster))
         new_nonselection.add(idx_to_remove)
 
@@ -1806,7 +1809,10 @@ class Solution_shm(Solution):
 
         # Generate pool of alternative points to compare to
         new_selection = set(self.iter_selected(cluster))
-        new_selection.remove(idx_to_remove)
+        try:
+            new_selection.remove(idx_to_remove)
+        except KeyError: #this might occur due to race conditions, do not raise error, but return inf
+            return np.inf, None, None, None
         new_nonselection = set(self.iter_unselected(cluster))
         new_nonselection.add(idx_to_remove)
 
