@@ -2438,6 +2438,9 @@ class Solution_shm(Solution):
 
                 # If solution changed (regardless of single or multiprocessing), accept the move
                 if solution_changed:
+                    # Immediately update epoch to notify workers
+                    self.epoch[0] += 1
+
                     self.accept_move(idxs_to_add, idxs_to_remove, candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters)
                     del idxs_to_add, idxs_to_remove, candidate_objective, candidate_components, add_within_cluster, add_for_other_clusters #sanity check, should throw error if something weird happens
 
@@ -2446,7 +2449,6 @@ class Solution_shm(Solution):
                     objectives.append(self.objective[0])
                     components.append(self.components.copy())
                     iteration += 1
-                    self.epoch[0] += 1
 
                     # Check if time exceeds allowed runtime
                     if time.time() - start_time > max_runtime:
