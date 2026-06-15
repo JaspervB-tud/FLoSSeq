@@ -1,5 +1,3 @@
-## Created with copilot on 11/11/2025
-
 [build-system]
 requires = ["hatchling>=1.18", "hatch-vcs"]
 build-backend = "hatchling.build"
@@ -27,20 +25,16 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 
-# Uncomment this once GitHub is no longer private
 [project.urls]
-#Homepage = "https://example.com/loser"
 Repository = "https://github.com/JaspervB-tud/ReSeT"
-#Issues = "https://github.com/your-org/loser/issues"
-Changelog = "https://github.com/JaspervB-tud/ReSeT/blob/main/CHANGELOG.md"
+Changelog  = "https://github.com/JaspervB-tud/ReSeT/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 test = ["pytest>=8,<9"]
 
 dashboard = [
-  "biopython>=1.83,<2.0",
-  "sourmash>=4.8,<5.0",
   "streamlit>=1.37,<2.0",
+  "pandas>=2.0,<3.0",
 ]
 
 [tool.hatch.version]
@@ -53,6 +47,7 @@ addopts = "-p no:cacheprovider"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/reset"]
+artifacts = ["src/reset/examples/**"]
 
 [tool.hatch.build.targets.sdist]
 include = [

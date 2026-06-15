@@ -15,6 +15,7 @@ import multiprocessing as mp
 from queue import Empty, Full
 import time
 import traceback
+import hashlib
 
 # This is to define the precision threshold for floating point comparisons
 PRECISION_THRESHOLD = 1e-10
@@ -29,6 +30,39 @@ MOVE_REMOVE = 3
 MOVE_BATCH = 4
 MOVE_SYNC = 99
 MOVE_STOP = 100
+
+# macOS limits POSIX shared-memory names to 30 characters (excluding the
+# leading '/').  This helper ensures names stay within that limit by replacing
+# long names with a short, deterministic SHA-1 digest.
+"""
+Testing on macOS revealed that POSIX shared-memory names are limited to 30 characters. This helper function
+ensures that shared-memory names stay within the limit by replacing long names with a shorter, deterministic
+hash digest.
+"""
+def _shm_safe_name(prefix: str, name: str, max_len: int = 30):
+    """
+    Generate a shared-memory name that is safe for POSIX limits.
+
+    Parameters:
+    -----------
+    prefix: str
+        A prefix to include in the shared-memory name for identification.
+    name: str
+        The original name to be used for the shared memory.
+    max_len: int
+        The maximum allowed length for the shared-memory name (default is 30 for POSIX compliance).
+
+    Returns:
+    --------
+    str
+        A shared-memory name that is guaranteed to be within the specified length limit.
+    """
+    full = f"{prefix}{name}"
+    if len(full) <= max_len:
+        return full
+    digest = hashlib.sha1(full.encode()).hexdigest()[:26]
+    return f"shm_{digest}"
+
 
 # Global variable for multiprocessing worker solutions (i.e. attached copies)
 _WORKER_SOL = None
@@ -1333,7 +1367,7 @@ class Solution_shm(Solution):
             """
             Helper function for attaching to a shared memory array.
             """
-            shm_name = f"{self.shm_prefix}{name}"
+            shm_name = _shm_safe_name(self.shm_prefix, name)
             shm_handle = shm.SharedMemory(create=False, name=shm_name)
             self._shm_handles[name] = shm_handle
             arr = np.ndarray(shape, dtype=dtype, buffer=shm_handle.buf)
@@ -1379,7 +1413,7 @@ class Solution_shm(Solution):
     def _create_shm_array(self, name: str, shape: tuple, dtype):
         """
         Creates a shared memory array and stores the handle.
-        
+
         Parameters:
         -----------
         name: str
@@ -1389,9 +1423,9 @@ class Solution_shm(Solution):
         dtype: numpy dtype
             Data type of the array.
         """
-        shm_name = f"{self.shm_prefix}{name}"
+        shm_name = _shm_safe_name(self.shm_prefix, name)
         size = int(np.prod(shape)) * np.dtype(dtype).itemsize
-        
+
         # Create shared memory
         shm_handle = shm.SharedMemory(create=True, size=size, name=shm_name)
         self._shm_handles[name] = shm_handle
@@ -1403,7 +1437,7 @@ class Solution_shm(Solution):
     
     def __enter__(self):
         """
-        Context manager so shared memory can be cleaned up automatically!
+        Context manager so shared memory can be cleaned up automatically.
         """
         return self
 
@@ -2943,8 +2977,8 @@ def main():
     parser.add_argument("--dist_delimiter", type=str, default="\t", help="Field delimiter for a generic distance file. Default: tab.")
     parser.add_argument("--dist_header", action="store_true", help="If set, skip the first line of a generic distance file.")
     # Objective parameters
-    parser.add_argument("--scale", type=float, default=None, help="Scale factor for inter-cluster similarity costs in the objective. If not set, no scaling is applied, potentially making the weighing skewed.")
-    parser.add_argument("--selection_cost", type=float, default=1.0, help="Cost for selecting an item. If set to 0, this omits inter-cluster similarity costs Default: 1.0.")
+    parser.add_argument("--scale", type=float, default=1e-5, help="Scale factor for inter-cluster similarity costs in the objective. If not set, no scaling is applied, potentially making the weighing skewed. If set to 0, inter-cluster similarity is omitted. Default: 1e-5.")
+    parser.add_argument("--selection_cost", type=float, default=1e-1, help="Cost for selecting an item. Default: 1e-1.")
     # Solver parameters
     parser.add_argument("--seed", type=int, default=12345, help="Random seed for initial solution generation. Default: 12345.")
     parser.add_argument("--max_fraction", type=float, default=0.5, help="Maximum fraction of items to include in the random initial solution. Default: 0.5.")

@@ -1,185 +1,156 @@
 from __future__ import annotations
-from typing import List, Tuple, Literal
 import numpy as np
-from Bio import SeqIO
-import sourmash
-from scipy.spatial.distance import squareform
-from multiprocessing import Pool, get_context
-from itertools import combinations
-from ..solution import Solution
+from ..solution import (
+    generate_distances_mash,
+    generate_distances_sourmash,
+    generate_distances_generic,
+)
 
-SelectionMethod = Literal["random", "medoid"]
-SeqPath = "/Users/jaspervanbemmelen/Documents/Projects/Reference Optimization/GISAID_downloaded-23-05-2025_dates-01-07-2024_31-12-2024/sequences.fasta"
-ClustPath = "/Users/jaspervanbemmelen/Documents/Projects/Reference Optimization/GISAID_downloaded-23-05-2025_dates-01-07-2024_31-12-2024/clusters.tsv"
+DISTANCE_FORMATS = ["mash", "sourmash_cosine", "sourmash_jaccard", "generic"]
 
-def read_fasta(filepath: str, min_length: int = 0):
+
+def read_clusters_for_dashboard(path, id_col=0, cluster_col=1, delimiter=",", header=False):
     """
-    Reads a multi-FASTA file and returns a dictionary mapping sequence IDs to sequences.
+    Read a delimited clusters/labels file.
 
     Parameters:
     -----------
-    filepath: str
-        Path to the multi-FASTA file.
-    min_length: int
-        Minimum length of sequences to include. Sequences shorter than this length will be skipped.
-        Default is 0 (no minimum length).
+    path: str
+        Path to the clusters file.
+    id_col: int
+        Column index (0-based) of the item ID. Default is 0.
+    cluster_col: int
+        Column index (0-based) of the cluster label. Default is 1.
+    delimiter: str
+        Field delimiter. Default is comma.
+    header: bool
+        If True, skip the first line. Default is False.
 
     Returns:
     --------
-    genomes: dict [str] -> (SeqRecord, str, sourmash.MinHash)
-        Dictionary mapping sequence IDs in the FASTA file to their corresponding sequences.
+    genomes: dict[str, dict]
+        {seq_id: {"cluster": label}} in file order.
+    ordered_seq_ids: list[str]
+        Sequence IDs in the order they appear in the file.
+        The position of each ID in this list is its integer index
+        in the distance file.
     """
     genomes = {}
-    for record in SeqIO.parse(filepath, "fasta"):
-        cur_seq = str(record.seq)
-        if len(cur_seq) >= min_length:
-            mh = sourmash.MinHash(n=0, ksize=31, scaled=10, track_abundance=True)
-            mh.add_sequence(cur_seq, force=True) #force=True to allow short sequences and non-ACGT chars
-            genomes[record.id] = {
-                "record": record,
-                "sequence": cur_seq,
-                "minhash": mh
-            }
-    return genomes
-
-def determine_clusters(filepath: str, genomes: dict):
-    """
-    Reads a clustering file and returns an updated version of the genomes dictionary with cluster information.
-    NOTE: For now this assumes that the clustering file is in tab-separated format with two columns:
-        - sequence ID
-        - cluster name (to be converted into ID later)
-
-    Parameters:
-    -----------
-    filepath: str
-        Path to the clustering file.
-    genomes: dict[str]
-        Dictionary mapping sequence IDs to their corresponding sequences.
-
-    Returns:
-    --------
-    genomes: dict [str] -> (SeqRecord, str, sourmash.MinHash, str)
-        Updated dictionary mapping sequence IDs to their corresponding sequences and cluster information.
-    """
-    with open(filepath, "r") as f_in:
+    ordered_seq_ids = []
+    with open(path, "r") as f_in:
+        if header:
+            next(f_in)
         for line in f_in:
-            seq_id, cluster_name = line.strip().split("\t")
-            if seq_id in genomes:
-                genomes[seq_id]["cluster"] = cluster_name
-            else:
-                print(f"Warning: sequence ID {seq_id} in clustering file not found in genomes.")
+            parts = line.strip().split(delimiter)
+            seq_id  = parts[id_col]
+            cluster = parts[cluster_col]
+            genomes[seq_id] = {"cluster": cluster}
+            ordered_seq_ids.append(seq_id)
+    return genomes, ordered_seq_ids
 
-    return genomes
 
-def downsample(genomes: dict, max_genomes: int = 2**31, random_state: int = None):
+def load_distance_matrix(path, n, distance_format="mash"):
     """
-    Downsamples genomes within each cluster to a maximum number of genomes.
+    Load the full pairwise distance matrix from a pre-computed distance file.
+
+    The integer indices in the distance file must correspond to the row order
+    of the clusters file (index 0 = first row, index 1 = second row, …).
 
     Parameters:
     -----------
-    genomes: dict[str]
-        Dictionary mapping sequence IDs to their corresponding sequences and cluster information.
-    max_genomes: int
-        Maximum number of genomes to retain per cluster. Default is 2^31.
-    random_state: int 
-        Random seed or RandomState for reproducibility. Default is None.
-        NOTE: When random_state is None or an unrecognized type, no shuffling is performed and 
-        the first max_genomes sequences per cluster are retained.
+    path: str
+        Path to the distance file.
+    n: int
+        Total number of sequences (size of the square distance matrix).
+    distance_format: str
+        One of 'mash', 'sourmash_cosine', 'sourmash_jaccard', 'generic'.
 
     Returns:
     --------
-    downsampled_genomes: dict[str]
-        Downsampled dictionary mapping sequence IDs to their corresponding sequences and cluster information.
+    D: np.ndarray, shape (n, n)
+        Full pairwise distance matrix.
     """
-    # Check for random state
+    D = np.zeros((n, n), dtype=np.float64)
+
+    if distance_format == "mash":
+        gen = generate_distances_mash(path)
+    elif distance_format == "sourmash_cosine":
+        gen = generate_distances_sourmash(path, dist_col=12)
+    elif distance_format == "sourmash_jaccard":
+        gen = generate_distances_sourmash(path, dist_col=6)
+    elif distance_format == "generic":
+        gen = generate_distances_generic(path)
+    else:
+        raise ValueError(f"Unknown distance format '{distance_format}'. "
+                         f"Choose from: {DISTANCE_FORMATS}")
+
+    for i, j, d in gen:
+        D[i, j] = d
+        D[j, i] = d
+    return D
+
+
+def downsample(genomes, max_genomes=2**31, random_state=None):
+    """
+    Downsample genomes within each cluster to at most max_genomes sequences.
+
+    Parameters:
+    -----------
+    genomes: dict[str, dict]
+        {seq_id: {"cluster": label, ...}}
+    max_genomes: int
+        Maximum number of sequences to retain per cluster.
+    random_state: int or np.random.RandomState or None
+        Controls shuffling before downsampling. When None, the first
+        max_genomes sequences per cluster are kept without shuffling.
+
+    Returns:
+    --------
+    dict[str, dict]
+        Downsampled subset of genomes, preserving original values.
+    """
     if isinstance(random_state, int):
         rng = np.random.RandomState(random_state)
     elif isinstance(random_state, np.random.RandomState):
         rng = random_state
     else:
         rng = None
-    # First organize in dict (cluster -> list of seq_ids)
-    sequences_per_cluster = {}
-    for seq_id in genomes:
-        cur_cluster = genomes[seq_id]["cluster"]
-        if cur_cluster not in sequences_per_cluster:
-            sequences_per_cluster[cur_cluster] = []
-        sequences_per_cluster[cur_cluster].append(seq_id)
-    # Now downsample
-    downsampled_genomes = {}
-    for cluster in sequences_per_cluster:
-        if len(sequences_per_cluster[cluster]) <= max_genomes: #can simply use all
-            for seq_id in sequences_per_cluster[cluster]:
-                downsampled_genomes[seq_id] = genomes[seq_id]
+
+    per_cluster = {}
+    for seq_id, g in genomes.items():
+        cluster = g["cluster"]
+        per_cluster.setdefault(cluster, []).append(seq_id)
+
+    downsampled = {}
+    for cluster, seq_ids in per_cluster.items():
+        if len(seq_ids) <= max_genomes:
+            for seq_id in seq_ids:
+                downsampled[seq_id] = genomes[seq_id]
         else:
+            pool = seq_ids[:]
             if rng is not None:
-                sequences_copy = sequences_per_cluster[cluster][:]
-                rng.shuffle(sequences_copy)
-                for seq_id in sequences_copy[:max_genomes]:
-                    downsampled_genomes[seq_id] = genomes[seq_id]
-            else:
-                for seq_id in sequences_per_cluster[cluster][:max_genomes]:
-                    downsampled_genomes[seq_id] = genomes[seq_id]
+                rng.shuffle(pool)
+            for seq_id in pool[:max_genomes]:
+                downsampled[seq_id] = genomes[seq_id]
 
-    return downsampled_genomes
+    return downsampled
 
 
-_minhashes = None
-_index2id = None
-def _init_pool(minhashes, index2id):
-    global _minhashes, _index2id
-    _minhashes = minhashes
-    _index2id = index2id
-
-def _compute_distance(pair):
-    i, j = pair
-    d = _minhashes[_index2id[i]].similarity(_minhashes[_index2id[j]])
-    return i, j, 1.0-d
-
-def compute_distances(genomes: dict, index2seq: list, seq2index: dict, cores: int = 1):
+def extract_submatrix(D_full, global_indices):
     """
-    Computes the pairwise distance matrix between genomes based on their MinHash sketches.
+    Extract a square submatrix for a subset of sequences.
 
     Parameters:
     -----------
-    genomes: dict[str]
-        Dictionary mapping sequence IDs to their corresponding sequences and MinHash sketches.
-    index2seq: list[str]
-        List mapping indices to sequence IDs.
-    seq2index: dict[str, int]
-        Dictionary mapping sequence IDs to their corresponding indices.
-    cores: int
-        Number of CPU cores to use for parallel computation. Default is 1 (single-core).
+    D_full: np.ndarray, shape (n, n)
+        Full pairwise distance matrix.
+    global_indices: list[int]
+        Row/column indices of the sequences to retain,
+        in the desired local order.
 
     Returns:
     --------
-    D: np.ndarray
-        Pairwise distance matrix between genomes.
+    np.ndarray, shape (k, k)  where k = len(global_indices)
     """
-    n = len(index2seq)
-    D = np.zeros((n, n), dtype=np.float32)
-    if n <= 1:
-        return D
-    else:
-        if cores == 1: #single core
-            for i in range(n):
-                for j in range(i):
-                    d = 1.0 - genomes[index2seq[i]]["minhash"].similarity(genomes[index2seq[j]]["minhash"])
-                    D[i,j] = d
-                    D[j,i] = d
-        else:   #multi-core
-            pairs = combinations(range(n), 2)
-            minhashes = {seq_id: genomes[seq_id]["minhash"] for seq_id in index2seq}
-            ctx = get_context("spawn")
-            with ctx.Pool(processes=cores, initializer=_init_pool, initargs=(minhashes, index2seq)) as pool:
-                for i, j, d in pool.imap_unordered(_compute_distance, pairs, chunksize=2048):
-                    D[i,j] = d
-                    D[j,i] = d
-    return D
-
-
-def main():
-    print()
-
-if __name__ == "__main__":
-    main()
+    idx = np.array(global_indices)
+    return D_full[np.ix_(idx, idx)]

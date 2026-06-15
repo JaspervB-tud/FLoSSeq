@@ -6,7 +6,7 @@
 #   --scale          1e-5   small penalty on inter-taxon similarity (keeps representatives distinct across taxa but lets intra-taxon coverage dominate the objective)
 #   --num_processes  1      single core 
 
-SCRIPT_DIR="examples/toy_example"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 python3 -m reset.solution \
     --clusters        "${SCRIPT_DIR}/clusters.csv" \

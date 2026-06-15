@@ -1,13 +1,11 @@
 name: reset_env_dashboard
 channels:
   - conda-forge
-  - bioconda
   - defaults
 dependencies:
-  - python=3.10
-  - numpy=2.0
-  - scipy=1.14
-  - pytest[version='>=8,<9']
-  - sourmash
-  - biopython
-  - streamlit
+  - python>=3.10
+  - numpy>=2.0
+  - scipy>=1.14
+  - pandas>=2.0
+  - streamlit>=1.37
+  - pytest>=8,<9
