@@ -108,8 +108,15 @@ When using the Python API directly, any generator yielding `(i, j, distance)` tu
 | `--max_iterations` | `10000000` | Maximum number of accepted local search moves. |
 | `--max_runtime` | `3600` | Wall-clock time limit in seconds. |
 | `--doubleswap_time_threshold` | `60.0` | Per-iteration time (seconds) beyond which double-swap moves are skipped. |
+
+### Control over multiprocessing
+
+| Argument | Default | Description |
+|---|---|---|
 | `--num_processes` | `1` | Number of parallel worker processes. Set to `1` for single-process mode. |
 | `--mp_switch_threshold` | `15.0` | Time threshold (seconds) for switching from single-process to multiprocessing mode. |
+
+Running ReSeT with multiple cores relies on the `Solution_shm` set-up which stores most information in shared memory in order to share across processes. \
 **WARNING:** Using multiple processes may create race conditions, leading to potential non-deterministic behaviour of the local search!
 
 ### Logging frequency
