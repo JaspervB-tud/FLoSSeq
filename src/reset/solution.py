@@ -145,18 +145,18 @@ class Solution:
                 self.cost_per_cluster[cluster] = selection_cost / np.sum(self.clusters == cluster)
             elif cost_per_cluster == 2:
                 # Define the average distance in a cluster as the average distance
-                # of all points in the cluster to the centroid of the cluster.
+                # of all points in the cluster to the medoid of the cluster.
                 cluster_points = np.where(self.clusters == cluster)[0]
-                centroid_idx = np.argmin([np.sum([get_distance(p, q, self.distances, self.num_points) for q in cluster_points]) for p in cluster_points])
-                centroid = cluster_points[centroid_idx]
-                self.cost_per_cluster[cluster] = np.mean([get_distance(centroid, p, self.distances, self.num_points) for p in cluster_points])
+                medoid_idx = np.argmin([np.sum([get_distance(p, q, self.distances, self.num_points) for q in cluster_points]) for p in cluster_points])
+                medoid = cluster_points[medoid_idx]
+                self.cost_per_cluster[cluster] = np.mean([get_distance(medoid, p, self.distances, self.num_points) for p in cluster_points])
             elif cost_per_cluster == -2:
                 # Define the average distance in a cluster as the average similarity
-                # of all points in the cluster to the centroid of the cluster.
+                # of all points in the cluster to the medoid of the cluster.
                 cluster_points = np.where(self.clusters == cluster)[0]
-                centroid_idx = np.argmin([np.sum([get_distance(p, q, self.distances, self.num_points) for q in cluster_points]) for p in cluster_points])
-                centroid = cluster_points[centroid_idx]
-                self.cost_per_cluster[cluster] = selection_cost * ( 1.0 - np.mean([get_distance(centroid, p, self.distances, self.num_points) for p in cluster_points]) )
+                medoid_idx = np.argmin([np.sum([get_distance(p, q, self.distances, self.num_points) for q in cluster_points]) for p in cluster_points])
+                medoid = cluster_points[medoid_idx]
+                self.cost_per_cluster[cluster] = selection_cost * ( 1.0 - np.mean([get_distance(medoid, p, self.distances, self.num_points) for p in cluster_points]) )
             elif cost_per_cluster == 3:
                 # Define the average distance in a cluster as the average distance
                 # of all points in the cluster to the closest point in the cluster.
@@ -167,9 +167,9 @@ class Solution:
         self.calculate_objective()
         
     @classmethod
-    def generate_centroid_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = None, seed=None):
+    def generate_medoid_solution(cls, distances, clusters, selection_cost: float = 1.0, cost_per_cluster: int = 0, scale: float = None, seed=None):
         """
-        Generates a Solution object with an initial solution by selecting the centroid for every cluster.
+        Generates a Solution object with an initial solution by selecting the medoid for every cluster.
         NOTE: This currently only works if distances is provided as a full distance matrix.
 
         Parameters:
@@ -185,7 +185,7 @@ class Solution:
             Defines how the cost of selecting a point in each cluster is calculated.
             0: Default behavior, set to selection cost.
             1: Set to selection_cost / number of points in cluster.
-            2: Set to the average distance in a cluster (average distance of all points in the cluster to the centroid of the cluster).
+            2: Set to the average distance in a cluster (average distance of all points in the cluster to the medoid of the cluster).
             3: Set to the average distance in a cluster (average distance of all points in the cluster to the closest point in the cluster).
         seed: int, optional
             Random seed for reproducibility.
@@ -195,7 +195,7 @@ class Solution:
         Returns:
         --------
         Solution
-            A solution object initialized with centroids for every cluster.
+            A solution object initialized with medoids for every cluster.
         """
         # Assert that distances and clusters have the same number of rows
         if distances.shape[0] != clusters.shape[0]:
@@ -210,8 +210,8 @@ class Solution:
         for cluster in unique_clusters:
             cluster_points = np.where(clusters == cluster)[0]
             cluster_distances = distances[np.ix_(cluster_points, cluster_points)]
-            centroid = np.argmin(np.sum(cluster_distances, axis=1))
-            selection[cluster_points[centroid]] = True
+            medoid = np.argmin(np.sum(cluster_distances, axis=1))
+            selection[cluster_points[medoid]] = True
 
         return cls(distances, clusters, selection=selection, selection_cost=selection_cost, cost_per_cluster=cost_per_cluster, scale=scale, seed=seed)
     
@@ -233,7 +233,7 @@ class Solution:
             Defines how the cost of selecting a point in each cluster is calculated.
             0: Default behavior, set to selection cost.
             1: Set to selection_cost / number of points in cluster.
-            2: Set to the average distance in a cluster (average distance of all points in the cluster to the centroid of the cluster).
+            2: Set to the average distance in a cluster (average distance of all points in the cluster to the medoid of the cluster).
             3: Set to the average distance in a cluster (average distance of all points in the cluster to the closest point in the cluster).
         max_fraction: float
             The maximum fraction of points to select (0-1].
@@ -1265,18 +1265,18 @@ class Solution_shm(Solution):
                 self.cost_per_cluster[cluster] = selection_cost / np.sum(self.clusters == cluster)
             elif cost_per_cluster == 2:
                 # Define the average distance in a cluster as the average distance
-                # of all points in the cluster to the centroid of the cluster.
+                # of all points in the cluster to the medoid of the cluster.
                 cluster_points = np.where(self.clusters == cluster)[0]
-                centroid_idx = np.argmin([np.sum([get_distance(p, q, self.distances, self.num_points) for q in cluster_points]) for p in cluster_points])
-                centroid = cluster_points[centroid_idx]
-                self.cost_per_cluster[cluster] = np.mean([get_distance(centroid, p, self.distances, self.num_points) for p in cluster_points])
+                medoid_idx = np.argmin([np.sum([get_distance(p, q, self.distances, self.num_points) for q in cluster_points]) for p in cluster_points])
+                medoid = cluster_points[medoid_idx]
+                self.cost_per_cluster[cluster] = np.mean([get_distance(medoid, p, self.distances, self.num_points) for p in cluster_points])
             elif cost_per_cluster == -2:
                 # Define the average distance in a cluster as the average similarity
-                # of all points in the cluster to the centroid of the cluster.
+                # of all points in the cluster to the medoid of the cluster.
                 cluster_points = np.where(self.clusters == cluster)[0]
-                centroid_idx = np.argmin([np.sum([get_distance(p, q, self.distances, self.num_points) for q in cluster_points]) for p in cluster_points])
-                centroid = cluster_points[centroid_idx]
-                self.cost_per_cluster[cluster] = selection_cost * (1.0 - np.mean([get_distance(centroid, p, self.distances, self.num_points) for p in cluster_points]))
+                medoid_idx = np.argmin([np.sum([get_distance(p, q, self.distances, self.num_points) for q in cluster_points]) for p in cluster_points])
+                medoid = cluster_points[medoid_idx]
+                self.cost_per_cluster[cluster] = selection_cost * (1.0 - np.mean([get_distance(medoid, p, self.distances, self.num_points) for p in cluster_points]))
                 # Define the average distance in a cluster as the average distance
                 # of all points in the cluster to the closest pointn in the cluster.
             elif cost_per_cluster == 3:
@@ -2730,70 +2730,185 @@ def get_distance(idx1: int, idx2: int, distances: np.ndarray, num_points: int):
     return distances[index]
 
 
-############### MAIN FUNCTION FOR MANUSCRIPT ###############
-def read_metadata(path):
-    seq2lin = {}
-    id_col = 0
-    lineage_col = 13
-    with open(path, "r") as f_in:
-        # Don't skip header, header isn't included
-        for line in f_in:
-            parts = line.strip().split("\t")
-            seq2lin[parts[id_col]] = parts[lineage_col]
-    return seq2lin
+# Helper functions for main
+def read_clusters(path, id_col=0, cluster_col=1, delimiter=",", header=False):
+    """
+    Read a delimited file mapping item IDs to cluster/class/taxon labels.
 
-def read_sequence_mapping(path):
+    Parameters:
+    -----------
+    path: str
+        Path to the input file.
+    id_col: int
+        Column index (0-based) for item IDs. Default is 0.
+    cluster_col: int
+        Column index (0-based) for cluster/class labels. Default is 1.
+    delimiter: str
+        Field delimiter. Default is ",".
+    header: bool
+        If True, skip the first line. Default is False.
+
+    Returns:
+    --------
+    dict
+        Mapping from item ID (str) to cluster label (str).
+    """
+    id2cluster = {}
+    with open(path, "r") as f_in:
+        if header: #if header, skip first line
+            next(f_in)
+        for line in f_in:
+            parts = line.strip().split(delimiter)
+            id2cluster[parts[id_col]] = parts[cluster_col]
+    return id2cluster
+
+def read_sequence_mapping(path, idx_col=0, id_col=1, delimiter="\t", header=False):
+    """
+    Read a delimited file mapping integer indices to item IDs.
+
+    Parameters:
+    -----------
+    path: str
+        Path to the mapping file.
+    idx_col: int
+        Column index (0-based) containing the integer index. Default is 0.
+    id_col: int
+        Column index (0-based) containing the item ID. Default is 1.
+    delimiter: str
+        Field delimiter. Default is tab.
+    header: bool
+        If True, skip the first line. Default is False.
+
+    Returns:
+    --------
+    dict
+        Mapping from integer index (int) to item ID (str).
+    """
     sequence_mapping = {}
     with open(path, "r") as f_in:
+        if header:
+            next(f_in)
         for line in f_in:
-            parts = line.strip().split("\t")
-            idx = int(parts[0])
-            seq_id = parts[1]
-            sequence_mapping[idx] = seq_id
+            parts = line.strip().split(delimiter)
+            sequence_mapping[int(parts[idx_col])] = parts[id_col]
     return sequence_mapping
 
-def generate_distances_mash(path):
+def generate_distances_mash(path, delimiter="\t", header=True):
+    """
+    Stream pairwise distances from a MASH lower-triangular distance file.
+
+    Mash writes one row per sequence: the first field is the sequence index,
+    followed by distances to all previously listed sequences. This generator
+    yields every (i, j, distance) pair from the lower triangle to be used directly
+    when constructing a Solution object.
+
+    Parameters:
+    -----------
+    path: str
+        Path to the Mash distance file.
+    delimiter: str
+        Field delimiter. Default is tab.
+    header: bool
+        If True, skip the first line. Default is True.
+
+    Yields:
+    -------
+    tuple of (int, int, float)
+        (query_index, match_index, distance) for each pair.
+    """
     mash_indices = []
     try:
-        with open(path, "r") as f_in: #Mash outputs distance pairs in tab-delimited format
-            next(f_in) #skip header
+        with open(path, "r") as f_in:
+            if header:
+                next(f_in)
             for line in f_in:
-                parts = line.strip().split("\t")
-
+                parts = line.strip().split(delimiter)
                 cur_idx = int(parts[0])
-                for other_idx, d in enumerate(parts[1:]): #remainder of line are distances to previous indices
-                    other_idx = mash_indices[other_idx]
-                    d = float(d)
-
-                    yield(cur_idx, other_idx, d)
+                for other_idx, d in enumerate(parts[1:]):
+                    yield (cur_idx, mash_indices[other_idx], float(d))
                 mash_indices.append(cur_idx)
     except FileNotFoundError:
-        print("Mash output file not found.", flush=True)
-        return #empty generator
-                    
-def generate_distances_sourmash(path, jaccard):
-    QUERY_IDX = 0
-    MATCH_IDX = 2
-    JACCARD_IDX = 6
-    COSINE_IDX = 12
+        print("Mash distance file not found.", flush=True)
+        return
 
-    dist_idx = JACCARD_IDX if jaccard else COSINE_IDX
+def generate_distances_sourmash(path, dist_col=12, query_col=0, match_col=2, delimiter=",", header=True):
+    """
+    Stream pairwise distances from a Sourmash CSV output file.
+
+    Sourmash stores similarities; this generator converts them to distances
+    via ``distance = 1 - similarity``. This generator yields every (i, j, distance)
+    pair from the output file to be used directly when constructing a Solution object.
+
+    Parameters:
+    -----------
+    path: str
+        Path to the Sourmash CSV file.
+    dist_col: int
+        Column index (0-based) of the similarity value to use.
+        Use 12 for cosine similarity (default) or 6 for Jaccard similarity.
+    query_col: int
+        Column index (0-based) of the query index. Default is 0.
+    match_col: int
+        Column index (0-based) of the match index. Default is 2.
+    delimiter: str
+        Field delimiter. Default is comma.
+    header: bool
+        If True, skip the first line. Default is True.
+
+    Yields:
+    -------
+    tuple of (int, int, float)
+        (query_index, match_index, distance) for each pair.
+    """
     try:
-        with open(path, "r") as f_in: #Sourmash outputs distance pairs in csv format
-            next(f_in) #skip header
+        with open(path, "r") as f_in:
+            if header:
+                next(f_in)
             for line in f_in:
-                parts = line.strip().split(",")
-
-                # Parse line
-                query = int(parts[QUERY_IDX])
-                match = int(parts[MATCH_IDX])
-                
-                d = 1.0 - float(parts[dist_idx]) #convert similarity to distance
-
-                yield (query, match, d)
+                parts = line.strip().split(delimiter)
+                yield (int(parts[query_col]), int(parts[match_col]), 1.0 - float(parts[dist_col]))
     except FileNotFoundError:
         print("Sourmash output file not found.", flush=True)
-        return #empty generator
+        return
+
+def generate_distances_generic(path, idx1_col=0, idx2_col=1, dist_col=2, delimiter="\t", header=False):
+    """
+    Stream pairwise distances from any delimited file with (index1, index2, distance) columns.
+
+    Use this for custom distance formats that are not produced by Mash or Sourmash.
+    Each row should contain the two item indices and their distance; only the lower
+    triangle (or any subset of pairs) needs to be present.
+
+    Parameters:
+    -----------
+    path: str
+        Path to the distance file.
+    idx1_col: int
+        Column index (0-based) of the first item's integer index. Default is 0.
+    idx2_col: int
+        Column index (0-based) of the second item's integer index. Default is 1.
+    dist_col: int
+        Column index (0-based) of the distance value. Default is 2.
+    delimiter: str
+        Field delimiter. Default is tab.
+    header: bool
+        If True, skip the first line. Default is False.
+
+    Yields:
+    -------
+    tuple of (int, int, float)
+        (index1, index2, distance) for each pair.
+    """
+    try:
+        with open(path, "r") as f_in:
+            if header:
+                next(f_in)
+            for line in f_in:
+                parts = line.strip().split(delimiter)
+                yield (int(parts[idx1_col]), int(parts[idx2_col]), float(parts[dist_col]))
+    except FileNotFoundError:
+        print("Distance file not found.", flush=True)
+        return
 
 def main():
     import argparse
@@ -2802,140 +2917,170 @@ def main():
     import math
     import traceback
 
-    parser = argparse.ArgumentParser(description="Run local search on SARS-CoV-2 data.")
-    parser.add_argument("--metadata", type=str, required=True, help="Path to metadata file.")
-    parser.add_argument("--sequences_mapping", type=str, required=True, help="Path to sequences mapping file.")
-    parser.add_argument("--distances", type=str, required=True, help="Path to distances file.")
-    parser.add_argument("--scale", type=float, default=None, help="Scale factor for inter-cluster costs in objective. If not set, scale is ommited (default behavior).")
-    parser.add_argument("--mash", action="store_true", help="Use Mash distances if set, otherwise use sourmash distances.")
-    parser.add_argument("--jaccard", action="store_true", help="Use Jaccard distances for sourmash if set, otherwise use cosine distances.")
-    parser.add_argument("--selection_cost", type=float, default=1.0, help="Selection cost per selected point.")
-    parser.add_argument("--seed", type=int, default=12345, help="Random seed for solution initialization.")
-    parser.add_argument("--max_fraction", type=float, default=0.5, help="Maximum fraction of points to initialize solution.")
-    parser.add_argument("--max_iterations", type=int, default=10_000_000, help="Maximum number of local search iterations.")
-    parser.add_argument("--max_runtime", type=float, default=60*60, help="Maximum runtime in seconds for local search.")
-    parser.add_argument("--doubleswap_time_threshold", type=float, default=60.0, help="Time threshold in seconds after which double swap moves will no longer be considered.")
-    parser.add_argument("--num_processes", type=int, default=8, help="Number of processes to use for local search.")
-    parser.add_argument("--output_folder", type=str, help="Path to output folder.")
+    parser = argparse.ArgumentParser(
+        description="ReSeT: Reference genome Selection Tool. Selects a representative subset of items from each cluster/class/taxon using local search."
+    )
+    # Input files
+    parser.add_argument("--clusters", type=str, required=True, help="Path to the clusters/labels file. Each row should contain an item ID and its cluster label.")
+    parser.add_argument("--id_col", type=int, default=0, help="Column index (0-based) for item IDs in the clusters file. Default: 0.")
+    parser.add_argument("--cluster_col", type=int, default=1, help="Column index (0-based) for cluster labels in the clusters file. Default: 1.")
+    parser.add_argument("--delimiter", type=str, default=",", help="Field delimiter for the clusters file. Default: ','.")
+    parser.add_argument("--header", action="store_true", help="If set, the first line of the clusters file is treated as a header and skipped.")
+    parser.add_argument("--sequences_mapping", type=str, default=None, help="Path to the sequences mapping file (TSV: integer_index<TAB>item_id).\nWhen provided, maps distance-file integer indices to item IDs.\nWhen omitted, the row order of the clusters file defines the index (row 0 = index 0, etc.).")
+    parser.add_argument("--distances", type=str, required=True, help="Path to the pairwise distances file.")
+    # Distance format
+    parser.add_argument("--distance_format", type=str, default="mash",
+                        choices=["mash", "sourmash_cosine", "sourmash_jaccard", "generic"],
+                        help="Format of the distances file. "
+                             "'mash': Mash lower-triangular output. "
+                             "'sourmash_cosine': Sourmash CSV output using cosine similarity (default). "
+                             "'sourmash_jaccard': Sourmash CSV output using Jaccard similarity. "
+                             "'generic': delimited file with (index1, index2, distance) columns.")
+    # Generic distance format options (only used when --distance_format generic)
+    parser.add_argument("--dist_idx1_col", type=int, default=0, help="Column index (0-based) of the first item index in a generic distance file. Default: 0.")
+    parser.add_argument("--dist_idx2_col", type=int, default=1, help="Column index (0-based) of the second item index in a generic distance file. Default: 1.")
+    parser.add_argument("--dist_dist_col", type=int, default=2, help="Column index (0-based) of the distance value in a generic distance file. Default: 2.")
+    parser.add_argument("--dist_delimiter", type=str, default="\t", help="Field delimiter for a generic distance file. Default: tab.")
+    parser.add_argument("--dist_header", action="store_true", help="If set, skip the first line of a generic distance file.")
+    # Objective parameters
+    parser.add_argument("--scale", type=float, default=None, help="Scale factor for inter-cluster similarity costs in the objective. If not set, no scaling is applied, potentially making the weighing skewed.")
+    parser.add_argument("--selection_cost", type=float, default=1.0, help="Cost for selecting an item. If set to 0, this omits inter-cluster similarity costs Default: 1.0.")
+    # Solver parameters
+    parser.add_argument("--seed", type=int, default=12345, help="Random seed for initial solution generation. Default: 12345.")
+    parser.add_argument("--max_fraction", type=float, default=0.5, help="Maximum fraction of items to include in the random initial solution. Default: 0.5.")
+    parser.add_argument("--max_iterations", type=int, default=10_000_000, help="Maximum number of local search iterations. Default: 10,000,000.")
+    parser.add_argument("--max_runtime", type=float, default=60*60, help="Maximum wall-clock runtime in seconds. Default: 3600.")
+    parser.add_argument("--doubleswap_time_threshold", type=float, default=60.0, help="Per-iteration time threshold (seconds) beyond which double-swap moves are skipped. Default: 60.")
+    parser.add_argument("--num_processes", type=int, default=1, help="Number of parallel worker processes. Use 1 for single-process mode. Default: 1 (single core processing).")
+    parser.add_argument("--mp_switch_threshold", type=float, default=15.0, help="Time threshold (seconds) for switching from single-process to multiprocessing mode. Default: 15.")
+    # Logging frequency
+    parser.add_argument("--logging_frequency", type=int, default=100, help="Frequency of logging progress during local search (every N iterations). Default: 100.")
+    # Output
+    parser.add_argument("--output", type=str, default=None, help="Path to the output file. Selected item IDs are written one per line. If not set, results are only printed to stdout.")
     args = parser.parse_args()
 
-    # Fetch data
-    seq2lin = read_metadata(args.metadata)
-    sequence_mapping = read_sequence_mapping(args.sequences_mapping)
-    unique_lineages = sorted(list(set(seq2lin.values())))
-    clusters = []
-    for idx, seq_id in sequence_mapping.items():
-        lineage = seq2lin[seq_id]
-        clusters.append(unique_lineages.index(lineage))
-    clusters = np.array(clusters, dtype=np.int32)
-
-    # Create distance generator
-    output_filename = ""
-    if args.mash:
-        distance_generator = generate_distances_mash(args.distances)
-        output_filename = f"MASH_{args.distances.split('_')[-1].replace('.dist', '')}.txt"
-    else:
-        distance_generator = generate_distances_sourmash(args.distances, jaccard=args.jaccard)
-        if args.jaccard:
-            output_filename = f"SOURMASH_Jaccard_{args.distances.split('_')[-1].replace('.csv', '')}.txt"
-        else:
-            output_filename = f"SOURMASH_Cosine_{args.distances.split('_')[-1].replace('.csv', '')}.txt"
-
-    # Initialize solution object
+    S = None
     try:
-        start = time.time() # Measure time to initialize solution object
+        # Load cluster labels and sequence mapping
+        id2cluster = read_clusters(args.clusters, id_col=args.id_col, cluster_col=args.cluster_col,
+                                   delimiter=args.delimiter, header=args.header)
+        if args.sequences_mapping is not None:
+            sequence_mapping = read_sequence_mapping(args.sequences_mapping)
+        else:
+            # Derive index→ID mapping from the row order of the clusters file
+            sequence_mapping = {}
+            with open(args.clusters, "r") as f_in:
+                if args.header:
+                    next(f_in)
+                for idx, line in enumerate(f_in):
+                    parts = line.strip().split(args.delimiter)
+                    sequence_mapping[idx] = parts[args.id_col]
+
+        unique_cluster_labels = sorted(set(id2cluster.values()))
+        label2int = {label: i for i, label in enumerate(unique_cluster_labels)}
+        clusters = np.array([label2int[id2cluster[seq_id]] for _, seq_id in sorted(sequence_mapping.items())], dtype=np.int32)
+
+        # Create distance generator
+        if args.distance_format == "mash":
+            distance_generator = generate_distances_mash(args.distances)
+        elif args.distance_format == "sourmash_cosine":
+            distance_generator = generate_distances_sourmash(args.distances, dist_col=12)
+        elif args.distance_format == "sourmash_jaccard":
+            distance_generator = generate_distances_sourmash(args.distances, dist_col=6)
+        elif args.distance_format == "generic":
+            distance_generator = generate_distances_generic(
+                args.distances,
+                idx1_col=args.dist_idx1_col,
+                idx2_col=args.dist_idx2_col,
+                dist_col=args.dist_dist_col,
+                delimiter=args.dist_delimiter,
+                header=args.dist_header,
+            )
+
+        # Initialize solution
+        start = time.time()
         if args.num_processes <= 1:
             S = Solution.generate_random_solution(
                 distances=distance_generator,
                 clusters=clusters,
                 selection_cost=args.selection_cost,
-                cost_per_cluster=0, #use standard cost per cluster (cost for selecting is equal to selection cost)
-                scale=args.scale, #if not provided, use default behavior
+                cost_per_cluster=0,
+                scale=args.scale,
                 max_fraction=args.max_fraction,
-                seed=args.seed
+                seed=args.seed,
             )
         else:
             S = Solution_shm.generate_random_solution(
                 distances=distance_generator,
                 clusters=clusters,
                 selection_cost=args.selection_cost,
-                cost_per_cluster=0, #use standard cost per cluster (cost for selecting is equal to selection cost)
-                scale=args.scale, #if not provided, use default behavior
+                cost_per_cluster=0,
+                scale=args.scale,
                 max_fraction=args.max_fraction,
-                seed=args.seed
+                seed=args.seed,
             )
-        print("Time spent initializing solution:", time.time() - start, flush=True)
+        print(f"Solution initialized in {time.time() - start:.2f}s", flush=True)
 
         # Run local search
         start = time.time()
         if args.num_processes <= 1:
-            time_per_iteration, objectives = S.local_search(
+            time_per_iteration, objectives, components = S.local_search(
                 max_iterations=args.max_iterations,
                 max_runtime=args.max_runtime,
-                random_move_order=True, random_index_order=True,
+                random_move_order=True,
+                random_index_order=True,
                 doubleswap_time_threshold=args.doubleswap_time_threshold,
                 logging=True,
-                logging_frequency=100,
+                logging_frequency=args.logging_frequency,
             )
         else:
-            time_per_iteration, objectives = S.local_search(
-                num_processes = args.num_processes,
+            time_per_iteration, objectives, components = S.local_search(
+                num_processes=args.num_processes,
                 max_iterations=args.max_iterations,
                 max_runtime=args.max_runtime,
-                random_move_order=True, random_index_order=True,
+                random_move_order=True,
+                random_index_order=True,
                 doubleswap_time_threshold=args.doubleswap_time_threshold,
-                mp_switch_threshold=15.0,
+                mp_switch_threshold=args.mp_switch_threshold,
                 logging=True,
-                logging_frequency=100,
+                logging_frequency=args.logging_frequency,
             )
-        print("Time spent in local search:", time.time() - start, flush=True)
+        print(f"Local search completed in {time.time() - start:.2f}s", flush=True)
 
-        # Sanity check, verify solution is still feasible and if local search solutions a monotonically improving objective
+        # Sanity checks
         assert S.determine_feasibility(), "Final solution is infeasible!"
-        for i in range(1, len(objectives)):
-            assert objectives[i] <= objectives[i-1] + PRECISION_THRESHOLD, "Objective did not monotonically decrease during local search!"
+        for idx in range(1, len(objectives)):
+            assert objectives[idx] <= objectives[idx-1] + PRECISION_THRESHOLD, "Objective did not monotonically decrease during local search!"
 
         selected_points = np.copy(S.selection)
-        # Output
-        S.calculate_objective() #ensure objective is up to date
-        if args.num_processes <= 1:
-            print("Final objective:", S.objective, flush=True)
-        else:
-            print("Final objective:", S.objective[0], flush=True)
-            S.cleanup()
-        print("Number of selected points:", np.sum(selected_points), flush=True)
+        S.calculate_objective()
+        final_objective = S.objective[0] if isinstance(S, Solution_shm) else S.objective
+        print(f"Final objective: {final_objective}", flush=True)
+        print(f"Selected items: {int(np.sum(selected_points))}", flush=True)
 
-        # Iterate over selected sequences on a per-lineage basis
-        for lineage in unique_lineages:
-            lineage_indices = [idx for idx, seq_id in sequence_mapping.items() if seq2lin[seq_id] == lineage]
-            num_selected_in_lineage = np.sum(selected_points[lineage_indices])
-            if num_selected_in_lineage > 0:
-                print(f"Lineage {lineage}: {num_selected_in_lineage} selected sequences", flush=True)
-            else:
-                raise ValueError(f"No sequences selected for lineage {lineage}!")
+        for label in unique_cluster_labels:
+            indices = [idx for idx, seq_id in sequence_mapping.items() if id2cluster[seq_id] == label]
+            n_selected = int(np.sum(selected_points[indices]))
+            print(f"  Cluster '{label}': {n_selected} selected", flush=True)
+            if n_selected == 0:
+                raise ValueError(f"No items selected for cluster '{label}'!")
 
-        # Write to output file
-        if output_filename != "" and args.output_folder is not None:
-            for lineage in unique_lineages:
-                os.makedirs(f"{args.output_folder}/{lineage}", exist_ok=True)
-                lineage_indices = [idx for idx, seq_id in sequence_mapping.items() if seq2lin[seq_id] == lineage]
-                with open(f"{args.output_folder}/{lineage}/{output_filename}", "w") as f_out:
-                    for idx in lineage_indices:
-                        if selected_points[idx]:
-                            f_out.write(f"{sequence_mapping[idx]}\n")
-
-        if isinstance(S, Solution_shm):
-            S.cleanup()
-        del S
+        # Write output
+        if args.output is not None:
+            with open(args.output, "w") as f_out:
+                for idx, seq_id in sorted(sequence_mapping.items()):
+                    if selected_points[idx]:
+                        f_out.write(f"{seq_id}\n")
+            print(f"Selected IDs written to: {args.output}", flush=True)
 
     except Exception as e:
         print("An error occurred during execution:", flush=True)
         print(str(e), flush=True)
         traceback.print_exc()
-
-        if isinstance(S, Solution_shm):
+    finally:
+        if S is not None and isinstance(S, Solution_shm):
             S.cleanup()
-        del S
+        S = None
 
 if __name__ == "__main__":
     main()

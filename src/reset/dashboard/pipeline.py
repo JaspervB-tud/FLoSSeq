@@ -8,7 +8,7 @@ from multiprocessing import Pool, get_context
 from itertools import combinations
 from ..solution import Solution
 
-SelectionMethod = Literal["random", "centroid"]
+SelectionMethod = Literal["random", "medoid"]
 SeqPath = "/Users/jaspervanbemmelen/Documents/Projects/Reference Optimization/GISAID_downloaded-23-05-2025_dates-01-07-2024_31-12-2024/sequences.fasta"
 ClustPath = "/Users/jaspervanbemmelen/Documents/Projects/Reference Optimization/GISAID_downloaded-23-05-2025_dates-01-07-2024_31-12-2024/clusters.tsv"
 

@@ -234,7 +234,7 @@ def run_app():
 
         init_method = st.radio(
             "Select initialization method",
-            ["Random", "Centroid"],
+            ["Random", "Medoid"],
             horizontal=True
         )
         selection_cost = st.number_input(
@@ -274,13 +274,13 @@ def run_app():
                 st.success(f"Random solution initialized with {np.sum(sol.selection)}/{n} sequences selected.")
                 st.session_state["solution"] = sol
                 st.session_state["_solution_initialized"] = True
-            else: #Centroid
-                sol = Solution.generate_centroid_solution(
+            else: #Medoid
+                sol = Solution.generate_medoid_solution(
                     D,
                     cluster_assignments,
                     selection_cost=selection_cost,
                 )
-                st.success(f"Centroid solution initialized with {np.sum(sol.selection)}/{n} sequences selected.")
+                st.success(f"Medoid solution initialized with {np.sum(sol.selection)}/{n} sequences selected.")
                 st.session_state["solution"] = sol
                 st.session_state["_solution_initialized"] = True
             st.success(f"**Initial objective value:** {sol.objective:.4f}")

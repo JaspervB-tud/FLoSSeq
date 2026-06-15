@@ -1,6 +1,9 @@
 *.ipynb
 _*.npy
 
+# Ignore toy example generation files
+
+
 # Ignore Python cache directories
 __pycache__/
 *.pyc
