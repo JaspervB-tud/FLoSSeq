@@ -110,6 +110,7 @@ When using the Python API directly, any generator yielding `(i, j, distance)` tu
 | `--doubleswap_time_threshold` | `60.0` | Per-iteration time (seconds) beyond which double-swap moves are skipped. |
 | `--num_processes` | `1` | Number of parallel worker processes. Set to `1` for single-process mode. |
 | `--mp_switch_threshold` | `15.0` | Time threshold (seconds) for switching from single-process to multiprocessing mode. |
+**WARNING:** Using multiple processes may create race conditions, leading to potential non-deterministic behaviour of the local search!
 
 ### Logging frequency
 | Argument | Default | Description |
