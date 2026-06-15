@@ -241,11 +241,12 @@ with Solution_shm.generate_random_solution(distances, clusters) as sol:
 **Decision Variables**
 
 - $x_g \in \{0,1\}$ — 1 if item $g$ is selected $\quad \forall g \in \mathcal{G}$
-- $y_{g,g'} \in \{0,1\}$ — 1 if $g'$ represents $g$ $\quad \forall g,g' \in \mathcal{G} : \tau(g) = \tau(g')$
 
 **Auxiliary Variables**
 
+- $y_{g,g'} \in \{0,1\}$ — 1 if $g'$ represents $g$ $\quad \forall g,g' \in \mathcal{G} : \tau(g) = \tau(g')$
 - $z_{g,g'} \in \{0,1\}$ — 1 if both $g$ and $g'$ are selected $\quad \forall g < g' \in \mathcal{G} : \tau(g) < \tau(g')$
+- $q_{t,t'} \geq 0$ - equal to the maximum similarity of selected items from different clusters $t$ and $t'$
 
 ### Full model with constraints
 
