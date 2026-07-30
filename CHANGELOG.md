@@ -3,6 +3,9 @@ All relevant changes are (or will be) documented here.
 This project attempts to follow Keep a Changelog and Semantic Versioning.
 Changes are tracked by GenAI.
 
+## [1.3.1] - 30-06-2026
+Added manuscript reproduction steps.
+
 ## [1.3.0] - 15/06/2026
 Big set of changes to make the tool actually functional for users.
 

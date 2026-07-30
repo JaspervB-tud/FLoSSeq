@@ -8,6 +8,11 @@ ReSeT selects a **representative subset** of items from a collection that is par
 
 The optimization is solved with a **local search** algorithm (add / swap / double-swap / remove moves) that supports both single-process and parallel multi-process execution via shared memory.
 
+If you use our tool, or want to refer to it for any reason, please cite our paper: "ReSeT: a taxonomy-aware reference genome selection tool" which is available on [bioRxiv](https://doi.org/10.64898/2026.06.17.732946)
+
+## Manuscript
+To obtain the results in our [manuscript](https://doi.org/10.64898/2026.06.17.732946), follow the steps outlined in the README found in `manuscript`!
+
 ## Installation
 
 ```bash
