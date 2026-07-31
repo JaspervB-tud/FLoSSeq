@@ -39,7 +39,7 @@ python -m reset.solution [OPTIONS]
 
 | Argument | Description |
 |---|---|
-| `--clusters PATH` | Clusters/labels file (see [format](#clusters-file) below). |
+| `--clusters PATH` | Clusters/labels file (see [format](#clusters-file) below) mapping every item to a label. |
 | `--distances PATH` | Pairwise distances file in Mash or Sourmash format. |
 | `--sequences_mapping PATH` | *(Optional)* Index-to-ID mapping file (see [format](#sequences-mapping-file) below). |
 
@@ -53,12 +53,14 @@ seq002,Cluster_A
 seq003,Cluster_B
 ```
 
+**NOTE**: with cluster we refer to a labeling of the items, rather than specific clusters.
+
 **Options:**
 
 | Argument | Default | Description |
 |---|---|---|
 | `--id_col` | `0` | Column index (0-based) of the item ID. |
-| `--cluster_col` | `1` | Column index (0-based) of the cluster label. |
+| `--cluster_col` | `1` | Column index (0-based) of the label. |
 | `--delimiter` | `,` | Field delimiter character. |
 | `--header` | *(flag)* | Skip the first line if a header is present. |
 

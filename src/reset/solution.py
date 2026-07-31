@@ -2955,7 +2955,7 @@ def main():
         description="ReSeT: Reference genome Selection Tool. Selects a representative subset of items from each cluster/class/taxon using local search."
     )
     # Input files
-    parser.add_argument("--clusters", type=str, required=True, help="Path to the clusters/labels file. Each row should contain an item ID and its cluster label.")
+    parser.add_argument("--clusters", type=str, required=True, help="Path to the clusters/labels file. Each row should contain an item ID and its corresponding label.")
     parser.add_argument("--id_col", type=int, default=0, help="Column index (0-based) for item IDs in the clusters file. Default: 0.")
     parser.add_argument("--cluster_col", type=int, default=1, help="Column index (0-based) for cluster labels in the clusters file. Default: 1.")
     parser.add_argument("--delimiter", type=str, default=",", help="Field delimiter for the clusters file. Default: ','.")
